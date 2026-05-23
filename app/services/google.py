@@ -248,6 +248,17 @@ def enrich_gmail_message_persona(db: Session, user: models.User, message: GmailM
     return message
 
 
+def _gmail_inbox_query(user: models.User) -> str:
+    user_email = normalize_email(user.email)
+    if not user_email:
+        return "in:inbox"
+    return f'in:inbox -from:"{user_email}"'
+
+
+def _sent_by_current_user(user: models.User, message: GmailMessageOut) -> bool:
+    return normalize_email(message.senderEmail or message.fromAddr) == normalize_email(user.email)
+
+
 async def list_gmail_messages(
     db: Session,
     settings: Settings,
@@ -257,7 +268,7 @@ async def list_gmail_messages(
 ) -> GmailMessagesPageOut:
     access_token = await google_access_token(db, settings, user)
     async with httpx.AsyncClient(timeout=30) as client:
-        params: dict[str, Any] = {"maxResults": limit, "q": "in:inbox", "includeSpamTrash": "false"}
+        params: dict[str, Any] = {"maxResults": limit, "q": _gmail_inbox_query(user), "includeSpamTrash": "false"}
         if page_token:
             params["pageToken"] = page_token
         listing = await _google_get_json_with_client(
@@ -283,9 +294,10 @@ async def list_gmail_messages(
                 return gmail_message_out(detail)
 
         message_items = await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        visible_items = [item for item in message_items if not _sent_by_current_user(user, item)]
         next_page_token = listing.get("nextPageToken")
         return GmailMessagesPageOut(
-            messages=[enrich_gmail_message_persona(db, user, item) for item in message_items],
+            messages=[enrich_gmail_message_persona(db, user, item) for item in visible_items],
             nextPageToken=next_page_token,
             resultSizeEstimate=listing.get("resultSizeEstimate"),
             limit=limit,

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from datetime import timedelta
 from email.message import EmailMessage
@@ -165,14 +166,23 @@ async def google_access_token(db: Session, settings: Settings, user: models.User
     return access_token
 
 
-async def google_get_json(url: str, access_token: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
+async def _google_get_json_with_client(
+    client: httpx.AsyncClient,
+    url: str,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
     if response.status_code == 429:
         raise HTTPException(status_code=429, detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="Google API 요청에 실패했습니다.")
     return response.json()
+
+
+async def google_get_json(url: str, access_token: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        return await _google_get_json_with_client(client, url, access_token, params)
 
 
 async def google_post_json(url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -227,21 +237,30 @@ def gmail_message_out(message: dict[str, Any]) -> GmailMessageOut:
 
 async def list_gmail_messages(db: Session, settings: Settings, user: models.User, limit: int) -> list[GmailMessageOut]:
     access_token = await google_access_token(db, settings, user)
-    listing = await google_get_json(
-        f"{GMAIL_API}/messages",
-        access_token,
-        params={"maxResults": limit, "q": "in:inbox", "includeSpamTrash": "false"},
-    )
-    messages = listing.get("messages", [])[:limit]
-    result: list[GmailMessageOut] = []
-    for item in messages:
-        detail = await google_get_json(
-            f"{GMAIL_API}/messages/{item['id']}",
+    async with httpx.AsyncClient(timeout=30) as client:
+        listing = await _google_get_json_with_client(
+            client,
+            f"{GMAIL_API}/messages",
             access_token,
-            params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"]},
+            params={"maxResults": limit, "q": "in:inbox", "includeSpamTrash": "false"},
         )
-        result.append(gmail_message_out(detail))
-    return result
+        messages = listing.get("messages", [])[:limit]
+        semaphore = asyncio.Semaphore(8)
+
+        async def fetch_metadata(item: dict[str, Any]) -> GmailMessageOut:
+            async with semaphore:
+                detail = await _google_get_json_with_client(
+                    client,
+                    f"{GMAIL_API}/messages/{item['id']}",
+                    access_token,
+                    params={
+                        "format": "metadata",
+                        "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"],
+                    },
+                )
+                return gmail_message_out(detail)
+
+        return await asyncio.gather(*(fetch_metadata(item) for item in messages))
 
 
 async def get_gmail_message_detail(db: Session, settings: Settings, user: models.User, message_id: str) -> tuple[GmailMessageOut, str]:

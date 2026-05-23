@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     token_encryption_key: str | None = None
 
     frontend_url: str = "http://localhost:3000"
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: str = "http://localhost:3000"
 
     session_cookie_name: str = "mello_session"
     session_cookie_secure: bool = False
@@ -42,19 +42,16 @@ class Settings(BaseSettings):
     solar_model: str = "solar-pro"
     solar_timeout_seconds: float = 60.0
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def split_cors_origins(cls, value: object) -> list[str]:
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value  # type: ignore[return-value]
-
     @field_validator("database_url")
     @classmethod
     def normalize_database_url(cls, value: str) -> str:
         if value.startswith("postgresql://"):
             return value.replace("postgresql://", "postgresql+psycopg://", 1)
         return value
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
 
 @lru_cache

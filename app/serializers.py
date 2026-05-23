@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app import models
 from app.config import GOOGLE_SCOPES
+from app.generation_options import generation_length_label, generation_tone_label
 from app.schemas import (
     HistoryOut,
     IntegrationStatus,
@@ -41,23 +42,11 @@ def human_when(value: datetime) -> str:
 
 
 def tone_label(value: int) -> str:
-    if value < 30:
-        return "격식 강함"
-    if value < 55:
-        return "격식"
-    if value < 75:
-        return "중립"
-    return "친근"
+    return generation_tone_label(value)
 
 
 def length_label(value: int) -> str:
-    if value < 30:
-        return "아주 짧게"
-    if value < 60:
-        return "짧음"
-    if value < 80:
-        return "보통"
-    return "자세히"
+    return generation_length_label(value)
 
 
 def user_out(user: models.User) -> UserOut:

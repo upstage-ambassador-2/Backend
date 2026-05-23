@@ -11,27 +11,16 @@ from langgraph.graph import END, START, StateGraph
 
 from app import models
 from app.config import Settings
+from app.generation_options import generation_length_description, generation_tone_description
 from app.schemas import GeneratedDraft
 
 
 def describe_tone(value: int) -> str:
-    if value < 30:
-        return "매우 격식 있고 정중한 톤"
-    if value < 55:
-        return "정중하고 업무적인 톤"
-    if value < 75:
-        return "중립적이고 자연스러운 톤"
-    return "친근하고 따뜻한 톤"
+    return generation_tone_description(value)
 
 
 def describe_length(value: int) -> str:
-    if value < 30:
-        return "핵심만 담은 아주 짧은 길이"
-    if value < 60:
-        return "짧고 간결한 길이"
-    if value < 80:
-        return "보통 길이"
-    return "상세하고 충분한 설명이 있는 길이"
+    return generation_length_description(value)
 
 
 def build_generation_messages(

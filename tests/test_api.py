@@ -63,7 +63,7 @@ def test_persona_crud():
         json={
             "name": "김지훈 팀장",
             "relation": "회사 · 직속 상사",
-            "tone": "결론 우선",
+            "tone": "격식",
             "keywords": ["결과 중심", "직설적"],
             "avoid": ["모호한 시작"],
             "prefer": "결론 → 일정 → 근거",
@@ -77,10 +77,13 @@ def test_persona_crud():
     assert listed.status_code == 200
     assert listed.json()[0]["keywords"] == ["결과 중심", "직설적"]
 
-    patched = client.patch(f"/personas/{persona_id}", json={"tone": "정중", "tagColor": "green"})
+    patched = client.patch(f"/personas/{persona_id}", json={"tone": "친근", "tagColor": "green"})
     assert patched.status_code == 200
-    assert patched.json()["tone"] == "정중"
+    assert patched.json()["tone"] == "친근"
     assert patched.json()["tagColor"] == "green"
+
+    invalid = client.patch(f"/personas/{persona_id}", json={"tone": "정중"})
+    assert invalid.status_code == 422
 
     deleted = client.delete(f"/personas/{persona_id}")
     assert deleted.status_code == 204
@@ -93,8 +96,8 @@ def test_history_endpoint_returns_frontend_compatible_shape():
         history = models.HistoryItem(
             user_id=user.id,
             brief="회의 일정 변경",
-            tone=20,
-            length=70,
+            tone=2,
+            length=4,
             subject="[Mello] 회의 일정 변경 요청",
             body="안녕하세요.\n회의 일정 변경 가능하실까요?",
             status="draft",
@@ -108,6 +111,10 @@ def test_history_endpoint_returns_frontend_compatible_shape():
     assert item["subj"] == "[Mello] 회의 일정 변경 요청"
     assert item["prev"].startswith("안녕하세요.")
     assert item["status"] == "draft"
+    assert item["tone"] == "격식"
+    assert item["toneValue"] == 2
+    assert item["length"] == "길게"
+    assert item["lengthValue"] == 4
 
 
 def test_generate_stream_persists_history(monkeypatch):
@@ -118,7 +125,7 @@ def test_generate_stream_persists_history(monkeypatch):
     monkeypatch.setattr("app.routers.ai.stream_solar_text", fake_stream)
     client, _ = authed_client()
 
-    response = client.post("/ai/generate", json={"brief": "테스트 메일 작성", "tone": 50, "length": 50})
+    response = client.post("/ai/generate", json={"brief": "테스트 메일 작성", "tone": 3, "length": 3})
     assert response.status_code == 200
     body = response.text
     assert "event: delta" in body
@@ -129,6 +136,31 @@ def test_generate_stream_persists_history(monkeypatch):
     assert len(history) == 1
     assert history[0]["subject"] == "테스트 제목"
     assert history[0]["body"] == "테스트 본문입니다."
+    assert history[0]["tone"] == "중립"
+    assert history[0]["toneValue"] == 3
+    assert history[0]["length"] == "보통"
+    assert history[0]["lengthValue"] == 3
+
+
+def test_generate_accepts_legacy_percentage_scale(monkeypatch):
+    async def fake_stream(_settings, _messages):
+        yield "Subject: 레거시 제목\n"
+        yield "Body:\n레거시 본문입니다."
+
+    monkeypatch.setattr("app.routers.ai.stream_solar_text", fake_stream)
+    client, _ = authed_client()
+
+    response = client.post("/ai/generate", json={"brief": "레거시 스케일", "tone": 75, "length": 100})
+    assert response.status_code == 200
+
+    history = client.get("/history").json()
+    assert history[0]["tone"] == "친근"
+    assert history[0]["toneValue"] == 4
+    assert history[0]["length"] == "매우 길게"
+    assert history[0]["lengthValue"] == 5
+
+    invalid = client.post("/ai/generate", json={"brief": "잘못된 스케일", "tone": 101, "length": 3})
+    assert invalid.status_code == 422
 
 
 def test_generate_links_reply_sender_to_existing_persona(monkeypatch):
@@ -149,8 +181,8 @@ def test_generate_links_reply_sender_to_existing_persona(monkeypatch):
         "/ai/generate",
         json={
             "brief": "",
-            "tone": 50,
-            "length": 50,
+            "tone": 3,
+            "length": 3,
             "replyContext": {
                 "gmailMessageId": "gmail-in-1",
                 "fromAddr": "김지훈 팀장 <LEAD@example.com>",

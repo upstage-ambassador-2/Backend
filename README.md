@@ -1,0 +1,87 @@
+# Mello API Backend
+
+FastAPI backend for Mello, the Google OAuth + Gmail + Upstage Solar mail assistant described in `docs/SPEC.md`.
+
+## Stack
+
+- FastAPI + SQLAlchemy
+- Postgres with `psycopg`
+- Google OAuth 2.0, Gmail API, Google People API
+- Upstage Solar through LangChain `ChatOpenAI` compatibility
+- LangGraph for the LLM generation workflow
+- HttpOnly cookie server sessions
+
+## Local Run
+
+1. Create a Postgres database.
+2. Copy `.env.example` to `.env`.
+3. Fill `DATABASE_URL`, `SECRET_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and `SOLAR_API_KEY`.
+4. Install and run:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn app.main:app --reload
+```
+
+The API auto-creates tables on startup. Runtime configuration is Postgres-first because the product spec and Railway deployment use Postgres. SQLite is used only inside the test suite through an explicit test override.
+
+## Checks
+
+```bash
+pytest -q
+```
+
+## Configuration
+
+See `.env.example` for the full variable list.
+
+Required for the full demo path:
+
+- `DATABASE_URL`
+- `SECRET_KEY`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI`
+- `SOLAR_API_KEY`
+
+For Railway with separate web/API domains, set `SESSION_COOKIE_SECURE=true`, `SESSION_COOKIE_SAMESITE=none`, and configure `CORS_ORIGINS` to the public frontend URL.
+
+## Demo Scenario
+
+1. Frontend calls `POST /auth/google/start` and redirects the browser to the returned `url`.
+2. Google redirects to `GET /auth/google/callback`; the API stores OAuth tokens, creates an HttpOnly session cookie, and redirects to `FRONTEND_URL`.
+3. Frontend calls `GET /me`, `GET /personas`, `GET /format`, and `GET /history` with credentials included.
+4. User creates or imports personas through `POST /personas` or `POST /personas/import-contacts`.
+5. User opens `GET /gmail/messages`, selects one message, then `GET /gmail/messages/{id}` returns a persisted `reply_context`.
+6. Compose calls `POST /ai/generate` and consumes SSE events:
+   - `event: delta` with streamed text
+   - `event: done` with final `subject`, `body`, and persisted `history`
+   - `event: error` on external failures
+7. Compose calls `POST /gmail/send`; Gmail sends from the authenticated user and matching history becomes `sent`.
+
+## Key Endpoints
+
+- `POST /auth/google/start`
+- `GET /auth/google/callback`
+- `POST /auth/logout`
+- `GET /me`
+- `GET/POST/PATCH/DELETE /personas`
+- `POST /personas/import-contacts`
+- `GET /history`, `GET /history/{id}`
+- `GET /format`, `PUT /format`
+- `POST /ai/generate`
+- `GET /gmail/messages`, `GET /gmail/messages/{id}`
+- `POST /gmail/send`
+- `GET /integrations`, `POST /integrations/{provider}/toggle`
+
+## Railway
+
+Use three services in one Railway project:
+
+- `mello-web`: Next.js frontend
+- `mello-api`: this FastAPI service
+- `mello-db`: Railway Postgres
+
+Set secrets in Railway variables, not in source control.

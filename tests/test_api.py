@@ -129,3 +129,115 @@ def test_generate_stream_persists_history(monkeypatch):
     assert len(history) == 1
     assert history[0]["subject"] == "테스트 제목"
     assert history[0]["body"] == "테스트 본문입니다."
+
+
+def test_generate_links_reply_sender_to_existing_persona(monkeypatch):
+    async def fake_stream(_settings, _messages):
+        yield "Subject: 답장 제목\n"
+        yield "Body:\n답장 본문입니다."
+
+    monkeypatch.setattr("app.routers.ai.stream_solar_text", fake_stream)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com")
+        db.add(persona)
+        db.commit()
+        db.refresh(persona)
+        persona_id = persona.id
+
+    response = client.post(
+        "/ai/generate",
+        json={
+            "brief": "",
+            "tone": 50,
+            "length": 50,
+            "replyContext": {
+                "gmailMessageId": "gmail-in-1",
+                "fromAddr": "김지훈 팀장 <LEAD@example.com>",
+                "subject": "일정 확인",
+                "snippet": "내일 일정 가능할까요?",
+                "rawBody": "내일 일정 가능할까요?",
+                "threadId": "thread-1",
+                "messageId": "<message-1@example.com>",
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert f'"personaId": "{persona_id}"' in response.text
+
+    history = client.get("/history", params={"personaEmail": "lead@example.com"}).json()
+    assert len(history) == 1
+    assert history[0]["personaId"] == persona_id
+    assert history[0]["personaEmail"] == "lead@example.com"
+    assert history[0]["counterpartyEmail"] == "lead@example.com"
+    assert history[0]["replyContext"]["senderEmail"] == "lead@example.com"
+
+
+def test_gmail_send_uses_history_persona_email_and_updates_history(monkeypatch):
+    sent = {}
+
+    async def fake_send_gmail_message(_db, _settings, _user, *, to, subject, body, cc, bcc, reply_context):
+        sent.update({"to": to, "subject": subject, "body": body, "cc": cc, "bcc": bcc, "reply_context": reply_context})
+        return {"id": "gmail-out-1", "threadId": "thread-out-1"}
+
+    monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com")
+        db.add(persona)
+        db.flush()
+        history = models.HistoryItem(
+            user_id=user.id,
+            persona_id=persona.id,
+            brief="일정 안내",
+            subject="일정 안내",
+            body="내일 뵙겠습니다.",
+            status="draft",
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    response = client.post(
+        "/gmail/send",
+        json={"historyId": history_id, "subject": "일정 안내", "body": "내일 뵙겠습니다."},
+    )
+    assert response.status_code == 200
+    assert sent["to"] == "lead@example.com"
+    payload = response.json()
+    assert payload["history"]["status"] == "sent"
+    assert payload["history"]["personaEmail"] == "lead@example.com"
+
+
+def test_gmail_message_detail_marks_matching_persona(monkeypatch):
+    async def fake_detail(_db, _settings, _user, _message_id):
+        from app.schemas import GmailMessageOut
+
+        return (
+            GmailMessageOut(
+                id="gmail-in-1",
+                threadId="thread-1",
+                fromAddr="김지훈 팀장 <LEAD@example.com>",
+                senderEmail="lead@example.com",
+                subject="일정 확인",
+                snippet="내일 일정 가능할까요?",
+                messageId="<message-1@example.com>",
+            ),
+            "내일 일정 가능할까요?",
+        )
+
+    monkeypatch.setattr("app.routers.gmail.get_gmail_message_detail", fake_detail)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com")
+        db.add(persona)
+        db.commit()
+        db.refresh(persona)
+        persona_id = persona.id
+
+    response = client.get("/gmail/messages/gmail-in-1")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["personaId"] == persona_id
+    assert payload["replyContext"]["personaId"] == persona_id
+    assert payload["replyContext"]["senderEmail"] == "lead@example.com"

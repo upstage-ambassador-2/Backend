@@ -10,6 +10,7 @@ from app.routers.format import get_or_create_format
 from app.schemas import GenerateIn, ReplyContextInline
 from app.serializers import history_out
 from app.services.google import upsert_reply_context
+from app.services.people import assign_persona_email_if_empty, find_persona_by_email
 from app.services.solar import build_generation_messages, parse_generated_draft, stream_solar_text
 
 
@@ -38,6 +39,12 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession, settin
             raise HTTPException(status_code=404, detail="답장 컨텍스트를 찾을 수 없습니다.")
     elif payload.replyContext:
         reply_context = upsert_reply_context(db, user, payload.replyContext)
+
+    if not persona and reply_context:
+        persona = find_persona_by_email(db, user.id, reply_context.from_addr)
+    if persona and reply_context and assign_persona_email_if_empty(db, user.id, persona, reply_context.from_addr):
+        db.commit()
+        db.refresh(persona)
 
     mail_format = get_or_create_format(user, db)
     messages = build_generation_messages(

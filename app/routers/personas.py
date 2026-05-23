@@ -6,6 +6,7 @@ from app.deps import AppSettings, CurrentUser, DbSession
 from app.schemas import ContactImportIn, ContactImportOut, PersonaCreate, PersonaOut, PersonaPatch
 from app.serializers import join_lines, persona_out
 from app.services.google import import_contacts
+from app.services.people import find_persona_by_email, normalize_email
 
 
 router = APIRouter(prefix="/personas", tags=["personas"])
@@ -20,7 +21,7 @@ def _apply_persona(persona: models.Persona, payload: PersonaCreate | PersonaPatc
         if key in list_fields:
             value = join_lines(value)
         elif key == "email" and value is not None:
-            value = str(value)
+            value = normalize_email(str(value))
         setattr(persona, column, value)
     if not persona.avatar and persona.name:
         persona.avatar = "".join(part[0] for part in persona.name.split()[:2]).upper()[:2]
@@ -36,10 +37,9 @@ def list_personas(user: CurrentUser, db: DbSession) -> list[PersonaOut]:
 
 @router.post("", response_model=PersonaOut, status_code=201)
 def create_persona(payload: PersonaCreate, user: CurrentUser, db: DbSession) -> PersonaOut:
-    if payload.email:
-        existing = db.scalar(
-            select(models.Persona).where(models.Persona.user_id == user.id, models.Persona.email == str(payload.email))
-        )
+    email = normalize_email(str(payload.email)) if payload.email else None
+    if email:
+        existing = find_persona_by_email(db, user.id, email)
         if existing:
             raise HTTPException(status_code=409, detail="이미 등록된 이메일입니다.")
     persona = models.Persona(user_id=user.id, name=payload.name)
@@ -55,15 +55,10 @@ def update_persona(persona_id: str, payload: PersonaPatch, user: CurrentUser, db
     persona = db.get(models.Persona, persona_id)
     if not persona or persona.user_id != user.id:
         raise HTTPException(status_code=404, detail="페르소나를 찾을 수 없습니다.")
-    if payload.email:
-        existing = db.scalar(
-            select(models.Persona).where(
-                models.Persona.user_id == user.id,
-                models.Persona.email == str(payload.email),
-                models.Persona.id != persona_id,
-            )
-        )
-        if existing:
+    email = normalize_email(str(payload.email)) if payload.email else None
+    if email:
+        existing = find_persona_by_email(db, user.id, email)
+        if existing and existing.id != persona_id:
             raise HTTPException(status_code=409, detail="이미 등록된 이메일입니다.")
     _apply_persona(persona, payload)
     db.commit()

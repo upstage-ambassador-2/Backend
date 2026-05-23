@@ -47,6 +47,7 @@ def build_generation_messages(
     if persona:
         persona_lines = [
             f"- 이름: {persona.name}",
+            f"- 이메일: {persona.email or '(미등록)'}",
             f"- 관계: {persona.relation}",
             f"- 선호 톤: {persona.tone}",
             f"- 메모: {persona.notes}",

@@ -132,6 +132,10 @@ class ReplyContextInline(BaseModel):
 
 class ReplyContextOut(ReplyContextInline):
     id: str
+    senderEmail: str | None = None
+    senderName: str | None = None
+    personaId: str | None = None
+    persona: PersonaOut | None = None
     createdAt: datetime
     updatedAt: datetime
 
@@ -164,6 +168,12 @@ class HistoryOut(BaseModel):
     id: str
     personaId: str | None
     replyContextId: str | None
+    persona: PersonaOut | None = None
+    replyContext: ReplyContextOut | None = None
+    personaName: str | None = None
+    personaEmail: str | None = None
+    counterpartyName: str | None = None
+    counterpartyEmail: str | None = None
     brief: str
     subject: str
     body: str
@@ -186,6 +196,10 @@ class GmailMessageOut(BaseModel):
     threadId: str | None = None
     fromAddr: str
     from_: str | None = Field(default=None, alias="from")
+    senderEmail: str | None = None
+    senderName: str | None = None
+    personaId: str | None = None
+    persona: PersonaOut | None = None
     subject: str
     snippet: str
     date: str | None = None

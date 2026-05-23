@@ -5,8 +5,9 @@ from fastapi import APIRouter, HTTPException, Query
 from app import models
 from app.deps import AppSettings, CurrentUser, DbSession
 from app.schemas import GmailMessageDetailOut, GmailMessageOut, GmailSendIn, GmailSendOut, ReplyContextInline
-from app.serializers import history_out, reply_context_out
+from app.serializers import history_out, persona_out, reply_context_out
 from app.services.google import get_gmail_message_detail, list_gmail_messages, send_gmail_message, upsert_reply_context
+from app.services.people import assign_persona_email_if_empty, find_persona_by_email, normalize_email
 
 
 router = APIRouter(prefix="/gmail", tags=["gmail"])
@@ -40,13 +41,21 @@ async def message_detail(message_id: str, user: CurrentUser, db: DbSession, sett
             date=message.date,
         ),
     )
-    return GmailMessageDetailOut(**message.model_dump(), rawBody=body, replyContext=reply_context_out(reply_context))
+    persona = find_persona_by_email(db, user.id, message.senderEmail or message.fromAddr)
+    if persona and not message.personaId:
+        message.personaId = persona.id
+        message.persona = persona_out(persona)
+    return GmailMessageDetailOut(
+        **message.model_dump(),
+        rawBody=body,
+        replyContext=reply_context_out(reply_context, persona),
+    )
 
 
 @router.post("/send", response_model=GmailSendOut)
 async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings: AppSettings) -> GmailSendOut:
     history = db.get(models.HistoryItem, payload.history_id_value) if payload.history_id_value else None
-    if history and history.user_id != user.id:
+    if payload.history_id_value and (not history or history.user_id != user.id):
         raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
 
     reply_context = None
@@ -57,11 +66,21 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
     elif history and history.reply_context_id:
         reply_context = db.get(models.ReplyContext, history.reply_context_id)
 
-    to_addr = str(payload.to) if payload.to else None
+    history_persona = history.persona if history and history.persona_id else None
+
+    to_addr = normalize_email(str(payload.to)) if payload.to else None
+    if not to_addr and history_persona and history_persona.email:
+        to_addr = normalize_email(history_persona.email)
     if not to_addr and reply_context:
-        to_addr = parseaddr(reply_context.from_addr)[1]
+        to_addr = normalize_email(parseaddr(reply_context.from_addr)[1] or reply_context.from_addr)
     if not to_addr:
         raise HTTPException(status_code=422, detail="받는 사람 이메일이 필요합니다.")
+
+    recipient_persona = history_persona or find_persona_by_email(db, user.id, to_addr)
+    if history and not history.persona_id and recipient_persona:
+        history.persona_id = recipient_persona.id
+    if history_persona:
+        assign_persona_email_if_empty(db, user.id, history_persona, to_addr)
 
     result = await send_gmail_message(
         db,
@@ -74,10 +93,14 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
         bcc=[str(item) for item in payload.bcc],
         reply_context=reply_context,
     )
+    if recipient_persona:
+        recipient_persona.last_used_at = models.utcnow()
     if history:
         history.status = "sent"
         history.gmail_message_id = str(result.get("id") or "")
         history.sent_at = models.utcnow()
+    if history or recipient_persona:
         db.commit()
+    if history:
         db.refresh(history)
     return GmailSendOut(id=str(result.get("id") or ""), threadId=result.get("threadId"), history=history_out(history) if history else None, raw=result)

@@ -1,7 +1,12 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from app.generation_options import GENERATION_LENGTH_LABELS, GENERATION_TONE_LABELS, normalize_generation_scale
+
+
+PersonaTone = Literal["매우 격식", "격식", "중립", "친근", "매우 친근"]
 
 
 class UserOut(BaseModel):
@@ -35,7 +40,7 @@ class AuthStartOut(BaseModel):
 class PersonaBase(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     relation: str = ""
-    tone: str = "중립"
+    tone: PersonaTone = "중립"
     notes: str = ""
     email: EmailStr | None = None
     role: str = ""
@@ -56,7 +61,7 @@ class PersonaCreate(PersonaBase):
 class PersonaPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     relation: str | None = None
-    tone: str | None = None
+    tone: PersonaTone | None = None
     notes: str | None = None
     email: EmailStr | None = None
     role: str | None = None
@@ -142,13 +147,23 @@ class ReplyContextOut(ReplyContextInline):
 
 class GenerateIn(BaseModel):
     brief: str = ""
-    tone: int = Field(default=50, ge=0, le=100)
-    length: int = Field(default=50, ge=0, le=100)
+    tone: int = 3
+    length: int = 3
     personaId: str | None = None
     persona_id: str | None = None
     replyContextId: str | None = None
     reply_context_id: str | None = None
     replyContext: ReplyContextInline | None = None
+
+    @field_validator("tone", mode="before")
+    @classmethod
+    def normalize_tone(cls, value):
+        return normalize_generation_scale(value, labels=GENERATION_TONE_LABELS, option_name="tone")
+
+    @field_validator("length", mode="before")
+    @classmethod
+    def normalize_length(cls, value):
+        return normalize_generation_scale(value, labels=GENERATION_LENGTH_LABELS, option_name="length")
 
     @property
     def persona_id_value(self) -> str | None:

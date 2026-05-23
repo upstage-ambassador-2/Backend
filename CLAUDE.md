@@ -2,6 +2,12 @@
 
 Use this repository as the backend service for Mello.
 
+## Shared Instructions
+
+- Read `AGENTS.md` first for the backend repository rules.
+- Repository: https://github.com/upstage-ambassador-2/Backend
+- Follow shared PR and issue conventions from https://github.com/upstage-ambassador-2/.github/blob/main/CONTRIBUTING.md.
+
 ## Context
 
 - The authoritative backend requirements are in `docs/SPEC.md`.

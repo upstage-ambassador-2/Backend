@@ -2,6 +2,12 @@
 
 This repository contains the Mello FastAPI backend.
 
+## Repository
+
+- GitHub: https://github.com/upstage-ambassador-2/Backend
+- Follow shared PR and issue conventions from https://github.com/upstage-ambassador-2/.github/blob/main/CONTRIBUTING.md.
+- Use the organization PR and issue templates from `upstage-ambassador-2/.github` unless this repository defines a local override.
+
 ## Project Rules
 
 - Treat `docs/SPEC.md` as the product contract.

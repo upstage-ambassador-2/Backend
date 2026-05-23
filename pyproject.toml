@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "FastAPI backend for the Mello AI mail assistant"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.13,<2",
   "cryptography>=42,<47",
   "email-validator>=2.2,<3",
   "fastapi>=0.111,<1",
@@ -24,6 +25,14 @@ dependencies = [
 dev = [
   "pytest>=8,<9",
 ]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["migrations*", "tests*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

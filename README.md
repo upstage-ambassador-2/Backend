@@ -22,16 +22,33 @@ FastAPI backend for Mello, the Google OAuth + Gmail + Upstage Solar mail assista
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-The API auto-creates tables on startup. Runtime configuration is Postgres-first because the product spec and Railway deployment use Postgres. SQLite is used only inside the test suite through an explicit test override.
+Schema changes are managed by Alembic migrations. Runtime configuration is Postgres-first because the product spec and Railway deployment use Postgres. SQLite is used only inside the test suite through an explicit test override.
 
 ## Checks
 
 ```bash
 pytest -q
 ```
+
+## Database Migrations
+
+Apply migrations:
+
+```bash
+alembic upgrade head
+```
+
+Create a new migration after changing SQLAlchemy models:
+
+```bash
+alembic revision --autogenerate -m "describe change"
+```
+
+`AUTO_CREATE_TABLES` is disabled by default. It exists only as a local/demo escape hatch; production and Railway should run Alembic explicitly.
 
 ## Configuration
 
@@ -84,4 +101,18 @@ Use three services in one Railway project:
 - `mello-api`: this FastAPI service
 - `mello-db`: Railway Postgres
 
-Set secrets in Railway variables, not in source control.
+The Dockerfile runs `alembic upgrade head` before starting Uvicorn and binds to Railway's `PORT` environment variable. Railway's default `postgresql://...` URL is normalized to SQLAlchemy's `postgresql+psycopg://...` driver URL in app config.
+
+Set secrets in Railway variables, not in source control. Minimum API variables:
+
+- `DATABASE_URL`
+- `SECRET_KEY`
+- `TOKEN_ENCRYPTION_KEY` recommended for stable token encryption
+- `FRONTEND_URL`
+- `CORS_ORIGINS`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI`
+- `SOLAR_API_KEY`
+- `SESSION_COOKIE_SECURE=true`
+- `SESSION_COOKIE_SAMESITE=none`

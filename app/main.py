@@ -13,7 +13,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    if settings.auto_create_tables:
+        init_db()
     yield
 
 

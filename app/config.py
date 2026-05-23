@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     app_env: str = "local"
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/mello"
+    auto_create_tables: bool = False
     secret_key: str = Field(default="dev-secret-change-me", min_length=12)
     token_encryption_key: str | None = None
 
@@ -47,6 +48,13 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value  # type: ignore[return-value]
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        if value.startswith("postgresql://"):
+            return value.replace("postgresql://", "postgresql+psycopg://", 1)
+        return value
 
 
 @lru_cache

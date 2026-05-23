@@ -6,6 +6,7 @@ Use this repository as the backend service for Mello.
 
 - The authoritative backend requirements are in `docs/SPEC.md`.
 - The service is FastAPI with SQLAlchemy models and Postgres runtime configuration.
+- DB schema changes must be represented as Alembic migrations.
 - LLM generation must use LangChain and LangGraph. The current implementation calls Upstage Solar through OpenAI-compatible `ChatOpenAI`.
 - Google OAuth, Gmail, and Contacts integrations live in `app/services/google.py`.
 - API routes live in `app/routers/`.
@@ -23,6 +24,7 @@ Use this repository as the backend service for Mello.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+alembic upgrade head
 pytest -q
 uvicorn app.main:app --reload
 ```

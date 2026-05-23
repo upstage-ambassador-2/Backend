@@ -9,6 +9,7 @@ This repository contains the Mello FastAPI backend.
 - Use FastAPI routers under `app/routers/` and keep external integrations under `app/services/`.
 - Use LangChain and LangGraph for LLM generation code. Do not replace the generation path with direct provider HTTP calls.
 - Keep Google OAuth scopes aligned with the spec: `openid`, `email`, `profile`, Gmail readonly/send, and contacts readonly.
+- Manage schema changes with Alembic migrations. Do not rely on `create_all()` for production schema evolution.
 - Do not commit secrets, local databases, virtual environments, caches, or `*.egg-info/`.
 - `.agents/` and `.claude/` are intentionally versioned project context folders; do not add ignore rules for them.
 
@@ -28,6 +29,6 @@ pip install -e ".[dev]"
 
 ## Notes
 
-- Tables are created on startup for the demo-oriented implementation.
+- Runtime schema migration is explicit through Alembic.
 - OAuth tokens are encrypted before persistence.
 - `/ai/generate` returns Server-Sent Events and persists a history item after generation completes.

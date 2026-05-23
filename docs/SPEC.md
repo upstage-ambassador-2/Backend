@@ -163,9 +163,21 @@
 - `GET  /history`, `GET /history/{id}`
 - `GET  /format`, `PUT /format`
 - `POST /ai/generate` (SSE) → Solar 호출, 결과 스트리밍, 완료 시 history에 저장
-- `GET  /gmail/messages` → 받은편지함 목록
+- `GET  /gmail/messages?limit=30&pageToken=<opaque-token>` → 받은편지함 목록 (cursor-paginated envelope)
 - `GET  /gmail/messages/{id}` → 단일 메일 (답장 컨텍스트용)
 - `POST /gmail/send` → 메일 발송 (답장 시 thread_id/references 포함)
+
+`GET /gmail/messages` 응답은 Gmail cursor를 그대로 노출하는 envelope를 사용한다:
+
+```json
+{
+  "messages": [],
+  "nextPageToken": null,
+  "resultSizeEstimate": 0,
+  "limit": 30,
+  "hasMore": false
+}
+```
 
 ### DB 스키마 (개략)
 ```
@@ -241,7 +253,7 @@ reply_contexts(id, user_id, gmail_message_id, from_addr, subject, snippet, raw_b
 
 ## Open Decisions (이후 단계에서 결정)
 다음 항목은 본 스펙의 결정과 직접 충돌하지 않으며 omc-plan/autopilot 단계에서 확정해도 무방:
-- 받은편지함 페이지 사이즈(N=30 추천), 폴링/새로고침 정책
+- 받은편지함 페이지 사이즈(N=30 추천), cursor pagination 정책 (`pageToken`, `nextPageToken`, `hasMore`)
 - Contacts 임포트 시 top-N 기준 (최근 연락? 알파벳? — 20개 추천)
 - 토큰 암호화 알고리즘 (AES-GCM + 키는 Railway secret)
 - SSE 타임아웃/하트비트 정책

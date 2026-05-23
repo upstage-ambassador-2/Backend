@@ -241,3 +241,142 @@ def test_gmail_message_detail_marks_matching_persona(monkeypatch):
     assert payload["personaId"] == persona_id
     assert payload["replyContext"]["personaId"] == persona_id
     assert payload["replyContext"]["senderEmail"] == "lead@example.com"
+
+
+def _gmail_metadata(message_id: str, subject: str | None = None, from_addr: str | None = None) -> dict:
+    return {
+        "id": message_id,
+        "threadId": f"thread-{message_id}",
+        "snippet": f"snippet-{message_id}",
+        "payload": {
+            "headers": [
+                {"name": "From", "value": from_addr or f"Sender {message_id} <sender-{message_id}@example.com>"},
+                {"name": "Subject", "value": subject or f"subject-{message_id}"},
+                {"name": "Date", "value": "Sat, 23 May 2026 12:00:00 +0000"},
+                {"name": "Message-ID", "value": f"<{message_id}@example.com>"},
+                {"name": "References", "value": "<root@example.com>"},
+            ]
+        },
+    }
+
+
+def test_gmail_messages_returns_paginated_envelope(monkeypatch):
+    async def fake_access_token(_db, _settings, _user):
+        return "gmail-access-token"
+
+    calls = []
+
+    async def fake_google_get(_client, url, access_token, params=None):
+        calls.append({"url": url, "access_token": access_token, "params": params})
+        if url.endswith("/messages"):
+            return {
+                "messages": [{"id": "msg-1"}, {"id": "msg-2"}],
+                "nextPageToken": "next-token",
+                "resultSizeEstimate": 42,
+            }
+        return _gmail_metadata(url.rsplit("/", 1)[-1])
+
+    monkeypatch.setattr("app.services.google.google_access_token", fake_access_token)
+    monkeypatch.setattr("app.services.google._google_get_json_with_client", fake_google_get)
+    client, _ = authed_client()
+
+    response = client.get("/gmail/messages?limit=2")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["nextPageToken"] == "next-token"
+    assert body["resultSizeEstimate"] == 42
+    assert body["limit"] == 2
+    assert body["hasMore"] is True
+    assert [message["id"] for message in body["messages"]] == ["msg-1", "msg-2"]
+    assert body["messages"][0]["from"] == "Sender msg-1 <sender-msg-1@example.com>"
+    assert calls[0]["access_token"] == "gmail-access-token"
+    assert calls[0]["params"] == {"maxResults": 2, "q": 'in:inbox -from:"user@example.com"', "includeSpamTrash": "false"}
+
+
+def test_gmail_messages_excludes_current_user_sender(monkeypatch):
+    async def fake_access_token(_db, _settings, _user):
+        return "gmail-access-token"
+
+    async def fake_google_get(_client, url, _access_token, params=None):
+        if url.endswith("/messages"):
+            return {
+                "messages": [{"id": "self-sent"}, {"id": "external"}],
+                "resultSizeEstimate": 2,
+            }
+        message_id = url.rsplit("/", 1)[-1]
+        if message_id == "self-sent":
+            return _gmail_metadata(message_id, from_addr="Tester <USER@example.com>")
+        return _gmail_metadata(message_id, from_addr="External Sender <external@example.com>")
+
+    monkeypatch.setattr("app.services.google.google_access_token", fake_access_token)
+    monkeypatch.setattr("app.services.google._google_get_json_with_client", fake_google_get)
+    client, _ = authed_client()
+
+    response = client.get("/gmail/messages?limit=2")
+
+    assert response.status_code == 200
+    assert [message["id"] for message in response.json()["messages"]] == ["external"]
+
+
+def test_gmail_messages_forwards_page_token_and_marks_final_page(monkeypatch):
+    async def fake_access_token(_db, _settings, _user):
+        return "gmail-access-token"
+
+    list_params = []
+
+    async def fake_google_get(_client, url, _access_token, params=None):
+        if url.endswith("/messages"):
+            list_params.append(params)
+            return {"messages": [{"id": "msg-3"}], "resultSizeEstimate": 3}
+        return _gmail_metadata(url.rsplit("/", 1)[-1], subject="final page")
+
+    monkeypatch.setattr("app.services.google.google_access_token", fake_access_token)
+    monkeypatch.setattr("app.services.google._google_get_json_with_client", fake_google_get)
+    client, _ = authed_client()
+
+    response = client.get("/gmail/messages?limit=30&pageToken=opaque-token")
+
+    assert response.status_code == 200
+    assert list_params == [
+        {"maxResults": 30, "q": 'in:inbox -from:"user@example.com"', "includeSpamTrash": "false", "pageToken": "opaque-token"}
+    ]
+    body = response.json()
+    assert body["nextPageToken"] is None
+    assert body["hasMore"] is False
+    assert body["messages"][0]["subject"] == "final page"
+
+
+def test_gmail_messages_handles_empty_page(monkeypatch):
+    async def fake_access_token(_db, _settings, _user):
+        return "gmail-access-token"
+
+    async def fake_google_get(_client, url, _access_token, params=None):
+        assert url.endswith("/messages")
+        assert params == {"maxResults": 10, "q": 'in:inbox -from:"user@example.com"', "includeSpamTrash": "false"}
+        return {"messages": [], "resultSizeEstimate": 0}
+
+    monkeypatch.setattr("app.services.google.google_access_token", fake_access_token)
+    monkeypatch.setattr("app.services.google._google_get_json_with_client", fake_google_get)
+    client, _ = authed_client()
+
+    response = client.get("/gmail/messages?limit=10")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [],
+        "nextPageToken": None,
+        "resultSizeEstimate": 0,
+        "limit": 10,
+        "hasMore": False,
+    }
+
+
+def test_gmail_messages_validates_limit_bounds():
+    client, _ = authed_client()
+
+    too_small = client.get("/gmail/messages?limit=0")
+    too_large = client.get("/gmail/messages?limit=101")
+
+    assert too_small.status_code == 422
+    assert too_large.status_code == 422

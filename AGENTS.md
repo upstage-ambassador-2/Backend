@@ -11,6 +11,7 @@ This repository contains the Mello FastAPI backend.
 ## Project Rules
 
 - Treat `docs/SPEC.md` as the product contract.
+- Keep deployment differences in Railway variables and environments. Do not fork auth code between `dev` and `main`.
 - Keep runtime database support Postgres-first. SQLite is acceptable only for isolated tests.
 - Use FastAPI routers under `app/routers/` and keep external integrations under `app/services/`.
 - Use LangChain and LangGraph for LLM generation code. Do not replace the generation path with direct provider HTTP calls.
@@ -32,6 +33,12 @@ When dependencies are missing, use Python 3.12 and install the local project wit
 ```bash
 pip install -e ".[dev]"
 ```
+
+## Branch Flow
+
+- Branch flow is `feature/* -> dev -> main`.
+- Bootstrap `dev` from `main`; promote verified `dev` to `main`.
+- Do not commit secrets or environment-specific callback URLs into code.
 
 ## Notes
 

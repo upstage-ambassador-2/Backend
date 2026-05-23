@@ -28,6 +28,15 @@ uvicorn app.main:app --reload
 
 Schema changes are managed by Alembic migrations. Runtime configuration is Postgres-first because the product spec and Railway deployment use Postgres. SQLite is used only inside the test suite through an explicit test override.
 
+For local OAuth testing with the frontend on port `3004`, keep these values aligned in `.env` and in the Google Cloud Web OAuth client:
+
+```env
+FRONTEND_URL=http://localhost:3004
+CORS_ORIGINS=http://localhost:3004
+GOOGLE_REDIRECT_URI=http://localhost:3004/auth/google/callback
+SESSION_COOKIE_SECURE=false
+```
+
 ## Checks
 
 ```bash
@@ -116,3 +125,20 @@ Set secrets in Railway variables, not in source control. Minimum API variables:
 - `SOLAR_API_KEY`
 - `SESSION_COOKIE_SECURE=true`
 - `SESSION_COOKIE_SAMESITE=none`
+
+## Branch and Railway Environments
+
+- `main` deploys to Railway `production`.
+- `dev` deploys to Railway `dev`.
+- Feature work should merge `feature/* -> dev`, then verified `dev -> main`.
+- Auth behavior must stay environment-driven. Do not hardcode dev/prod callback URLs in code.
+
+Dev Railway uses the same backend code with a separate Postgres service instance and separate variables:
+
+- `APP_ENV=dev`
+- `DATABASE_URL=${{Postgres.DATABASE_URL}}` in the Railway `dev` environment
+- `FRONTEND_URL=<dev frontend public URL>`
+- `CORS_ORIGINS=<dev frontend public URL>`
+- `GOOGLE_REDIRECT_URI=<dev frontend public URL>/auth/google/callback`
+- `SESSION_COOKIE_SECURE=true`
+- `SESSION_COOKIE_SAMESITE=lax`

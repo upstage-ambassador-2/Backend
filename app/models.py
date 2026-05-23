@@ -35,6 +35,8 @@ class User(Base):
     oauth_token: Mapped["OAuthToken | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
     sessions: Mapped[list["SessionToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     personas: Mapped[list["Persona"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    reply_contexts: Mapped[list["ReplyContext"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    history_items: Mapped[list["HistoryItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     mail_format: Mapped["MailFormat | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
@@ -94,6 +96,7 @@ class Persona(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(back_populates="personas")
+    history_items: Mapped[list["HistoryItem"]] = relationship(back_populates="persona")
 
 
 class MailFormat(Base):
@@ -132,6 +135,9 @@ class ReplyContext(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
+    user: Mapped[User] = relationship(back_populates="reply_contexts")
+    history_items: Mapped[list["HistoryItem"]] = relationship(back_populates="reply_context")
+
 
 class HistoryItem(Base):
     __tablename__ = "history"
@@ -150,3 +156,7 @@ class HistoryItem(Base):
     gmail_message_id: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="history_items")
+    persona: Mapped[Persona | None] = relationship(back_populates="history_items")
+    reply_context: Mapped[ReplyContext | None] = relationship(back_populates="history_items")

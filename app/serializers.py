@@ -10,6 +10,7 @@ from app.schemas import (
     ReplyContextOut,
     UserOut,
 )
+from app.services.people import display_name_from_address, normalize_email
 
 
 def split_lines(value: str | None) -> list[str]:
@@ -117,11 +118,15 @@ def mail_format_out(mail_format: models.MailFormat) -> MailFormatOut:
     )
 
 
-def reply_context_out(reply_context: models.ReplyContext) -> ReplyContextOut:
+def reply_context_out(reply_context: models.ReplyContext, persona: models.Persona | None = None) -> ReplyContextOut:
     return ReplyContextOut(
         id=reply_context.id,
         gmailMessageId=reply_context.gmail_message_id,
         fromAddr=reply_context.from_addr,
+        senderEmail=normalize_email(reply_context.from_addr),
+        senderName=display_name_from_address(reply_context.from_addr),
+        personaId=persona.id if persona else None,
+        persona=persona_out(persona) if persona else None,
         subject=reply_context.subject,
         snippet=reply_context.snippet,
         rawBody=reply_context.raw_body,
@@ -136,10 +141,21 @@ def reply_context_out(reply_context: models.ReplyContext) -> ReplyContextOut:
 
 def history_out(history: models.HistoryItem) -> HistoryOut:
     preview = history.body.replace("\n", " ")[:120]
+    persona = history.persona
+    reply_context = history.reply_context
+    reply_context_payload = reply_context_out(reply_context, persona) if reply_context else None
+    counterparty_email = persona.email if persona else normalize_email(reply_context.from_addr if reply_context else None)
+    counterparty_name = persona.name if persona else display_name_from_address(reply_context.from_addr if reply_context else None)
     return HistoryOut(
         id=history.id,
         personaId=history.persona_id,
         replyContextId=history.reply_context_id,
+        persona=persona_out(persona) if persona else None,
+        replyContext=reply_context_payload,
+        personaName=persona.name if persona else None,
+        personaEmail=persona.email if persona else None,
+        counterpartyName=counterparty_name,
+        counterpartyEmail=counterparty_email,
         brief=history.brief,
         subject=history.subject,
         body=history.body,

@@ -14,6 +14,8 @@ from app import models
 from app.config import GOOGLE_SCOPES, Settings
 from app.schemas import GmailMessageOut, ReplyContextInline
 from app.security import decrypt_token, encrypt_token
+from app.serializers import persona_out
+from app.services.people import display_name_from_address, find_persona_by_email, normalize_email
 
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -223,16 +225,27 @@ def _plain_text_from_payload(payload: dict[str, Any]) -> str:
 
 def gmail_message_out(message: dict[str, Any]) -> GmailMessageOut:
     headers = _headers_map(message)
+    from_addr = headers.get("from", "")
     return GmailMessageOut(
         id=str(message.get("id", "")),
         threadId=message.get("threadId"),
-        fromAddr=headers.get("from", ""),
+        fromAddr=from_addr,
+        senderEmail=normalize_email(from_addr),
+        senderName=display_name_from_address(from_addr),
         subject=headers.get("subject", ""),
         snippet=str(message.get("snippet") or ""),
         date=headers.get("date"),
         messageId=headers.get("message-id"),
         references=headers.get("references"),
     )
+
+
+def enrich_gmail_message_persona(db: Session, user: models.User, message: GmailMessageOut) -> GmailMessageOut:
+    persona = find_persona_by_email(db, user.id, message.senderEmail or message.fromAddr)
+    if persona:
+        message.personaId = persona.id
+        message.persona = persona_out(persona)
+    return message
 
 
 async def list_gmail_messages(db: Session, settings: Settings, user: models.User, limit: int) -> list[GmailMessageOut]:
@@ -260,13 +273,14 @@ async def list_gmail_messages(db: Session, settings: Settings, user: models.User
                 )
                 return gmail_message_out(detail)
 
-        return await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        results = await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        return [enrich_gmail_message_persona(db, user, item) for item in results]
 
 
 async def get_gmail_message_detail(db: Session, settings: Settings, user: models.User, message_id: str) -> tuple[GmailMessageOut, str]:
     access_token = await google_access_token(db, settings, user)
     detail = await google_get_json(f"{GMAIL_API}/messages/{message_id}", access_token, params={"format": "full"})
-    message = gmail_message_out(detail)
+    message = enrich_gmail_message_persona(db, user, gmail_message_out(detail))
     body = _plain_text_from_payload(detail.get("payload", {}))
     return message, body
 
@@ -311,11 +325,11 @@ async def import_contacts(db: Session, settings: Settings, user: models.User, li
         names = person.get("names") or []
         emails = person.get("emailAddresses") or []
         name = (names[0].get("displayName") if names else "") or ""
-        email = (emails[0].get("value") if emails else "") or None
+        email = normalize_email((emails[0].get("value") if emails else "") or None)
         if not name or not email:
             skipped += 1
             continue
-        exists = db.scalar(select(models.Persona).where(models.Persona.user_id == user.id, models.Persona.email == email))
+        exists = find_persona_by_email(db, user.id, email)
         if exists:
             skipped += 1
             continue

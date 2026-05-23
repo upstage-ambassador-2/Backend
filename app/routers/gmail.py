@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app import models
 from app.deps import AppSettings, CurrentUser, DbSession
-from app.schemas import GmailMessageDetailOut, GmailMessageOut, GmailSendIn, GmailSendOut, ReplyContextInline
+from app.schemas import GmailMessageDetailOut, GmailMessagesPageOut, GmailSendIn, GmailSendOut, ReplyContextInline
 from app.serializers import history_out, persona_out, reply_context_out
 from app.services.google import get_gmail_message_detail, list_gmail_messages, send_gmail_message, upsert_reply_context
 from app.services.people import assign_persona_email_if_empty, find_persona_by_email, normalize_email
@@ -13,14 +13,15 @@ from app.services.people import assign_persona_email_if_empty, find_persona_by_e
 router = APIRouter(prefix="/gmail", tags=["gmail"])
 
 
-@router.get("/messages", response_model=list[GmailMessageOut])
+@router.get("/messages", response_model=GmailMessagesPageOut)
 async def messages(
     user: CurrentUser,
     db: DbSession,
     settings: AppSettings,
     limit: int = Query(default=30, ge=1, le=100),
-) -> list[GmailMessageOut]:
-    return await list_gmail_messages(db, settings, user, limit)
+    page_token: str | None = Query(default=None, alias="pageToken"),
+) -> GmailMessagesPageOut:
+    return await list_gmail_messages(db, settings, user, limit, page_token)
 
 
 @router.get("/messages/{message_id}", response_model=GmailMessageDetailOut)

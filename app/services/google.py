@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.config import GOOGLE_SCOPES, Settings
-from app.schemas import GmailMessageOut, ReplyContextInline
+from app.schemas import GmailMessageOut, GmailMessagesPageOut, ReplyContextInline
 from app.security import decrypt_token, encrypt_token
 from app.serializers import persona_out
 from app.services.people import display_name_from_address, find_persona_by_email, normalize_email
@@ -248,16 +248,25 @@ def enrich_gmail_message_persona(db: Session, user: models.User, message: GmailM
     return message
 
 
-async def list_gmail_messages(db: Session, settings: Settings, user: models.User, limit: int) -> list[GmailMessageOut]:
+async def list_gmail_messages(
+    db: Session,
+    settings: Settings,
+    user: models.User,
+    limit: int,
+    page_token: str | None = None,
+) -> GmailMessagesPageOut:
     access_token = await google_access_token(db, settings, user)
     async with httpx.AsyncClient(timeout=30) as client:
+        params: dict[str, Any] = {"maxResults": limit, "q": "in:inbox", "includeSpamTrash": "false"}
+        if page_token:
+            params["pageToken"] = page_token
         listing = await _google_get_json_with_client(
             client,
             f"{GMAIL_API}/messages",
             access_token,
-            params={"maxResults": limit, "q": "in:inbox", "includeSpamTrash": "false"},
+            params=params,
         )
-        messages = listing.get("messages", [])[:limit]
+        messages = (listing.get("messages") or [])[:limit]
         semaphore = asyncio.Semaphore(8)
 
         async def fetch_metadata(item: dict[str, Any]) -> GmailMessageOut:
@@ -273,8 +282,15 @@ async def list_gmail_messages(db: Session, settings: Settings, user: models.User
                 )
                 return gmail_message_out(detail)
 
-        results = await asyncio.gather(*(fetch_metadata(item) for item in messages))
-        return [enrich_gmail_message_persona(db, user, item) for item in results]
+        message_items = await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        next_page_token = listing.get("nextPageToken")
+        return GmailMessagesPageOut(
+            messages=[enrich_gmail_message_persona(db, user, item) for item in message_items],
+            nextPageToken=next_page_token,
+            resultSizeEstimate=listing.get("resultSizeEstimate"),
+            limit=limit,
+            hasMore=bool(next_page_token),
+        )
 
 
 async def get_gmail_message_detail(db: Session, settings: Settings, user: models.User, message_id: str) -> tuple[GmailMessageOut, str]:

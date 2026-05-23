@@ -71,7 +71,7 @@ For Railway with separate web/API domains, set `SESSION_COOKIE_SECURE=true`, `SE
 2. Google redirects to `GET /auth/google/callback`; the API stores OAuth tokens, creates an HttpOnly session cookie, and redirects to `FRONTEND_URL`.
 3. Frontend calls `GET /me`, `GET /personas`, `GET /format`, and `GET /history` with credentials included.
 4. User creates or imports personas through `POST /personas` or `POST /personas/import-contacts`.
-5. User opens `GET /gmail/messages`, selects one message, then `GET /gmail/messages/{id}` returns a persisted `reply_context`.
+5. User opens `GET /gmail/messages?limit=30`, follows `nextPageToken` when present, selects one message, then `GET /gmail/messages/{id}` returns a persisted `reply_context`.
 6. Compose calls `POST /ai/generate` and consumes SSE events:
    - `event: delta` with streamed text
    - `event: done` with final `subject`, `body`, and persisted `history`
@@ -89,9 +89,23 @@ For Railway with separate web/API domains, set `SESSION_COOKIE_SECURE=true`, `SE
 - `GET /history`, `GET /history/{id}`
 - `GET /format`, `PUT /format`
 - `POST /ai/generate`
-- `GET /gmail/messages`, `GET /gmail/messages/{id}`
+- `GET /gmail/messages?limit=30&pageToken=<opaque-token>`, `GET /gmail/messages/{id}`
 - `POST /gmail/send`
 - `GET /integrations`, `POST /integrations/{provider}/toggle`
+
+`GET /gmail/messages` returns a cursor-paginated envelope:
+
+```json
+{
+  "messages": [],
+  "nextPageToken": null,
+  "resultSizeEstimate": 0,
+  "limit": 30,
+  "hasMore": false
+}
+```
+
+`pageToken` is the opaque Gmail cursor from the previous response. `limit` is bounded from 1 to 100.
 
 ## Railway
 

@@ -215,6 +215,14 @@ class GmailMessageOut(BaseModel):
         return self
 
 
+class GmailMessagesPageOut(BaseModel):
+    messages: list[GmailMessageOut]
+    nextPageToken: str | None = None
+    resultSizeEstimate: int | None = None
+    limit: int
+    hasMore: bool
+
+
 class GmailMessageDetailOut(GmailMessageOut):
     rawBody: str
     replyContext: ReplyContextOut

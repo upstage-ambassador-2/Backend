@@ -246,7 +246,7 @@ def test_import_contacts_skips_duplicate_email_and_name(monkeypatch):
     async def fake_access_token(_db, _settings, _user):
         return "people-access-token"
 
-    async def fake_google_get_json(_url, _access_token, params=None):
+    async def fake_google_get_json(_url, _access_token, params=None, **_kwargs):
         assert params["pageSize"] == 20
         return {
             "connections": [
@@ -287,6 +287,27 @@ def test_import_contacts_skips_duplicate_email_and_name(monkeypatch):
     assert "new-name@example.com" not in emails
     assert "mentor-alt@example.com" not in emails
     assert [persona["name"] for persona in payload["personas"]].count("최은영 책임") == 1
+
+
+def test_import_contacts_permission_error_mentions_contacts(monkeypatch):
+    original_async_client = google_service.httpx.AsyncClient
+
+    async def fake_access_token(_db, _settings, _user):
+        return "people-access-token"
+
+    transport = httpx.MockTransport(lambda _request: httpx.Response(403, json={}))
+    monkeypatch.setattr(google_service, "google_access_token", fake_access_token)
+    monkeypatch.setattr(
+        google_service.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: original_async_client(transport=transport),
+    )
+    client, _ = authed_client()
+
+    response = client.post("/personas/import-contacts", json={"limit": 20})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Google Contacts 권한이 부족합니다. Google 권한을 다시 동의해주세요."
 
 
 def test_history_endpoint_returns_frontend_compatible_shape():
@@ -627,7 +648,7 @@ def test_gmail_messages_returns_paginated_envelope(monkeypatch):
 
     calls = []
 
-    async def fake_google_get(_client, url, access_token, params=None):
+    async def fake_google_get(_client, url, access_token, params=None, **_kwargs):
         calls.append({"url": url, "access_token": access_token, "params": params})
         if url.endswith("/messages"):
             return {
@@ -659,7 +680,7 @@ def test_gmail_messages_excludes_current_user_sender(monkeypatch):
     async def fake_access_token(_db, _settings, _user):
         return "gmail-access-token"
 
-    async def fake_google_get(_client, url, _access_token, params=None):
+    async def fake_google_get(_client, url, _access_token, params=None, **_kwargs):
         if url.endswith("/messages"):
             return {
                 "messages": [{"id": "self-sent"}, {"id": "external"}],
@@ -686,7 +707,7 @@ def test_gmail_messages_forwards_page_token_and_marks_final_page(monkeypatch):
 
     list_params = []
 
-    async def fake_google_get(_client, url, _access_token, params=None):
+    async def fake_google_get(_client, url, _access_token, params=None, **_kwargs):
         if url.endswith("/messages"):
             list_params.append(params)
             return {"messages": [{"id": "msg-3"}], "resultSizeEstimate": 3}
@@ -712,7 +733,7 @@ def test_gmail_messages_handles_empty_page(monkeypatch):
     async def fake_access_token(_db, _settings, _user):
         return "gmail-access-token"
 
-    async def fake_google_get(_client, url, _access_token, params=None):
+    async def fake_google_get(_client, url, _access_token, params=None, **_kwargs):
         assert url.endswith("/messages")
         assert params == {"maxResults": 10, "q": 'in:inbox -from:"user@example.com"', "includeSpamTrash": "false"}
         return {"messages": [], "resultSizeEstimate": 0}

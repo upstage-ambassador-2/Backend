@@ -173,25 +173,46 @@ async def _google_get_json_with_client(
     url: str,
     access_token: str,
     params: dict[str, Any] | None = None,
+    *,
+    fallback_detail: str = "Google API 요청에 실패했습니다.",
+    forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
 ) -> dict[str, Any]:
     response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
-    _raise_google_api_error(response, fallback_detail="Google API 요청에 실패했습니다.")
+    _raise_google_api_error(response, fallback_detail=fallback_detail, forbidden_detail=forbidden_detail)
     return response.json()
 
 
-async def google_get_json(url: str, access_token: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+async def google_get_json(
+    url: str,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    *,
+    fallback_detail: str = "Google API 요청에 실패했습니다.",
+    forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
-        return await _google_get_json_with_client(client, url, access_token, params)
+        return await _google_get_json_with_client(
+            client,
+            url,
+            access_token,
+            params,
+            fallback_detail=fallback_detail,
+            forbidden_detail=forbidden_detail,
+        )
 
 
 async def google_post_json(url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {access_token}"})
-    _raise_google_api_error(response, fallback_detail="Gmail 발송에 실패했습니다.")
+    _raise_google_api_error(
+        response,
+        fallback_detail="Gmail 발송에 실패했습니다.",
+        forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    )
     return response.json()
 
 
-def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str) -> None:
+def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str, forbidden_detail: str) -> None:
     if response.status_code == 401:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -200,7 +221,7 @@ def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str) -
     if response.status_code == 403:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+            detail=forbidden_detail,
         )
     if response.status_code == 429:
         raise HTTPException(
@@ -294,6 +315,8 @@ async def list_gmail_messages(
             f"{GMAIL_API}/messages",
             access_token,
             params=params,
+            fallback_detail="Gmail 받은편지함 조회에 실패했습니다.",
+            forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
         )
         messages = (listing.get("messages") or [])[:limit]
         semaphore = asyncio.Semaphore(8)
@@ -308,6 +331,8 @@ async def list_gmail_messages(
                         "format": "metadata",
                         "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"],
                     },
+                    fallback_detail="Gmail 메시지 조회에 실패했습니다.",
+                    forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
                 )
                 return gmail_message_out(detail)
 
@@ -325,7 +350,13 @@ async def list_gmail_messages(
 
 async def get_gmail_message_detail(db: Session, settings: Settings, user: models.User, message_id: str) -> tuple[GmailMessageOut, str]:
     access_token = await google_access_token(db, settings, user)
-    detail = await google_get_json(f"{GMAIL_API}/messages/{message_id}", access_token, params={"format": "full"})
+    detail = await google_get_json(
+        f"{GMAIL_API}/messages/{message_id}",
+        access_token,
+        params={"format": "full"},
+        fallback_detail="Gmail 메시지 조회에 실패했습니다.",
+        forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    )
     message = enrich_gmail_message_persona(db, user, gmail_message_out(detail))
     body = _plain_text_from_payload(detail.get("payload", {}))
     return message, body
@@ -364,6 +395,8 @@ async def import_contacts(db: Session, settings: Settings, user: models.User, li
             "personFields": "names,emailAddresses,metadata",
             "sortOrder": "LAST_MODIFIED_DESCENDING",
         },
+        fallback_detail="Google Contacts를 가져오지 못했습니다.",
+        forbidden_detail="Google Contacts 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
     )
     imported: list[models.Persona] = []
     existing_names = {

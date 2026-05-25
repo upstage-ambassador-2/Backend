@@ -70,6 +70,32 @@ def test_google_start_constrains_redirect_to_frontend_origin():
     assert _oauth_start_next(client, "//evil.example/phishing") == "http://localhost:3000"
 
 
+def test_google_callback_cancel_redirects_to_login_without_session():
+    client = TestClient(app)
+
+    response = client.get(
+        "/auth/google/callback?error=access_denied&state=invalid",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3000/login?auth_error=access_denied"
+    assert "mello_session" not in response.cookies
+
+
+def test_google_callback_invalid_state_redirects_to_login_without_session():
+    client = TestClient(app)
+
+    response = client.get(
+        "/auth/google/callback?code=unused-code&state=invalid",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3000/login?auth_error=invalid_state"
+    assert "mello_session" not in response.cookies
+
+
 def test_me_and_format_roundtrip():
     client, _ = authed_client()
 

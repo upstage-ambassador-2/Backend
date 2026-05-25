@@ -347,6 +347,38 @@ def test_gmail_send_uses_history_persona_email_and_updates_history(monkeypatch):
     assert payload["history"]["personaEmail"] == "lead@example.com"
 
 
+def test_gmail_send_does_not_resend_already_sent_history(monkeypatch):
+    async def fake_send_gmail_message(*_args, **_kwargs):
+        raise AssertionError("Already sent history should not be sent again")
+
+    monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        history = models.HistoryItem(
+            user_id=user.id,
+            brief="재발송 방지",
+            subject="재발송 방지",
+            body="이미 보낸 본문입니다.",
+            status="sent",
+            gmail_message_id="gmail-existing-1",
+            sent_at=models.utcnow(),
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    response = client.post(
+        "/gmail/send",
+        json={"historyId": history_id, "subject": "재발송 방지", "body": "이미 보낸 본문입니다."},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == "gmail-existing-1"
+    assert payload["history"]["status"] == "sent"
+    assert payload["raw"] == {"id": "gmail-existing-1", "deduplicated": True}
+
+
 def test_gmail_send_rejects_blank_subject_or_body(monkeypatch):
     async def fake_send_gmail_message(*_args, **_kwargs):
         raise AssertionError("Gmail send should not be called for invalid content")

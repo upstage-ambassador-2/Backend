@@ -273,6 +273,10 @@ def _sent_by_current_user(user: models.User, message: GmailMessageOut) -> bool:
     return normalize_email(message.senderEmail or message.fromAddr) == normalize_email(user.email)
 
 
+def _normalize_contact_name(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
 async def list_gmail_messages(
     db: Session,
     settings: Settings,
@@ -362,19 +366,25 @@ async def import_contacts(db: Session, settings: Settings, user: models.User, li
         },
     )
     imported: list[models.Persona] = []
+    existing_names = {
+        _normalize_contact_name(name)
+        for name in db.scalars(select(models.Persona.name).where(models.Persona.user_id == user.id)).all()
+    }
     skipped = 0
     for person in payload.get("connections", [])[:limit]:
         names = person.get("names") or []
         emails = person.get("emailAddresses") or []
         name = (names[0].get("displayName") if names else "") or ""
         email = normalize_email((emails[0].get("value") if emails else "") or None)
-        if not name or not email:
+        normalized_name = _normalize_contact_name(name)
+        if not normalized_name or not email:
             skipped += 1
             continue
         exists = find_persona_by_email(db, user.id, email)
-        if exists:
+        if exists or normalized_name in existing_names:
             skipped += 1
             continue
+        existing_names.add(normalized_name)
         persona = models.Persona(
             user_id=user.id,
             name=name,

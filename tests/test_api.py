@@ -242,6 +242,53 @@ def test_persona_delete_rejects_history_linked_persona():
     assert client.get("/history").json()[0]["personaId"] == persona_id
 
 
+def test_import_contacts_skips_duplicate_email_and_name(monkeypatch):
+    async def fake_access_token(_db, _settings, _user):
+        return "people-access-token"
+
+    async def fake_google_get_json(_url, _access_token, params=None):
+        assert params["pageSize"] == 20
+        return {
+            "connections": [
+                {
+                    "names": [{"displayName": " 김지훈   팀장 "}],
+                    "emailAddresses": [{"value": "new-name@example.com"}],
+                },
+                {
+                    "names": [{"displayName": "박서연 책임"}],
+                    "emailAddresses": [{"value": "LEAD@example.com"}],
+                },
+                {
+                    "names": [{"displayName": "최은영 책임"}],
+                    "emailAddresses": [{"value": "mentor@example.com"}],
+                },
+                {
+                    "names": [{"displayName": "최은영   책임"}],
+                    "emailAddresses": [{"value": "mentor-alt@example.com"}],
+                },
+            ]
+        }
+
+    monkeypatch.setattr(google_service, "google_access_token", fake_access_token)
+    monkeypatch.setattr(google_service, "google_get_json", fake_google_get_json)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        db.add(models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com"))
+        db.commit()
+
+    response = client.post("/personas/import-contacts", json={"limit": 20})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["imported"] == 1
+    assert payload["skipped"] == 3
+    emails = {persona["email"] for persona in payload["personas"]}
+    assert "mentor@example.com" in emails
+    assert "new-name@example.com" not in emails
+    assert "mentor-alt@example.com" not in emails
+    assert [persona["name"] for persona in payload["personas"]].count("최은영 책임") == 1
+
+
 def test_history_endpoint_returns_frontend_compatible_shape():
     client, user = authed_client()
     with SessionLocal() as db:

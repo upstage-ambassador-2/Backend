@@ -71,6 +71,16 @@ def delete_persona(persona_id: str, user: CurrentUser, db: DbSession) -> None:
     persona = db.get(models.Persona, persona_id)
     if not persona or persona.user_id != user.id:
         raise HTTPException(status_code=404, detail="페르소나를 찾을 수 없습니다.")
+    linked_history_id = db.scalar(
+        select(models.HistoryItem.id)
+        .where(
+            models.HistoryItem.user_id == user.id,
+            models.HistoryItem.persona_id == persona_id,
+        )
+        .limit(1)
+    )
+    if linked_history_id:
+        raise HTTPException(status_code=409, detail="히스토리와 연결된 페르소나는 삭제할 수 없습니다.")
     db.delete(persona)
     db.commit()
 

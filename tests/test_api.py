@@ -138,6 +138,31 @@ def test_persona_crud():
     assert client.get("/personas").json() == []
 
 
+def test_persona_delete_rejects_history_linked_persona():
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com")
+        db.add(persona)
+        db.flush()
+        db.add(
+            models.HistoryItem(
+                user_id=user.id,
+                persona_id=persona.id,
+                brief="연결된 히스토리",
+                subject="연결된 히스토리",
+                body="삭제 보호 확인",
+            )
+        )
+        db.commit()
+        persona_id = persona.id
+
+    deleted = client.delete(f"/personas/{persona_id}")
+
+    assert deleted.status_code == 409
+    assert deleted.json()["detail"] == "히스토리와 연결된 페르소나는 삭제할 수 없습니다."
+    assert client.get("/history").json()[0]["personaId"] == persona_id
+
+
 def test_history_endpoint_returns_frontend_compatible_shape():
     client, user = authed_client()
     with SessionLocal() as db:

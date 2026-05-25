@@ -78,6 +78,31 @@ def test_me_and_format_roundtrip():
     assert fetched.json()["signature"] == "Tester"
 
 
+def test_integration_toggle_allows_known_providers_only():
+    client, _ = authed_client()
+
+    gmail = client.post("/integrations/gmail/toggle")
+    assert gmail.status_code == 200
+    assert gmail.json()["provider"] == "gmail"
+    assert gmail.json()["message"] == "Gmail/Contacts는 Google OAuth 동의 시점에 연결됩니다."
+
+    contacts_alias = client.post("/integrations/google_contacts/toggle")
+    assert contacts_alias.status_code == 200
+    assert contacts_alias.json()["provider"] == "contacts"
+
+    slack = client.post("/integrations/slack/toggle")
+    assert slack.status_code == 200
+    assert slack.json() == {
+        "provider": "slack",
+        "status": "planned",
+        "message": "지원 예정입니다.",
+    }
+
+    unknown = client.post("/integrations/dropbox/toggle")
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"] == "지원하지 않는 연동 제공자입니다."
+
+
 def test_persona_crud():
     client, _ = authed_client()
 

@@ -204,6 +204,17 @@ class HistoryOut(BaseModel):
     prev: str
 
 
+class HistoryDraftPatchIn(BaseModel):
+    subject: str | None = None
+    body: str | None = None
+
+    @model_validator(mode="after")
+    def require_update_field(self):
+        if self.subject is None and self.body is None:
+            raise ValueError("수정할 초안 내용이 필요합니다.")
+        return self
+
+
 class GmailMessageOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

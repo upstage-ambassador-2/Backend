@@ -314,6 +314,28 @@ def test_gmail_send_uses_history_persona_email_and_updates_history(monkeypatch):
     assert payload["history"]["personaEmail"] == "lead@example.com"
 
 
+def test_gmail_send_rejects_blank_subject_or_body(monkeypatch):
+    async def fake_send_gmail_message(*_args, **_kwargs):
+        raise AssertionError("Gmail send should not be called for invalid content")
+
+    monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
+    client, _ = authed_client()
+
+    blank_subject = client.post(
+        "/gmail/send",
+        json={"to": "lead@example.com", "subject": "   ", "body": "본문입니다."},
+    )
+    blank_body = client.post(
+        "/gmail/send",
+        json={"to": "lead@example.com", "subject": "제목입니다.", "body": "\n\t"},
+    )
+
+    assert blank_subject.status_code == 422
+    assert "제목은 비워둘 수 없습니다." in blank_subject.text
+    assert blank_body.status_code == 422
+    assert "본문은 비워둘 수 없습니다." in blank_body.text
+
+
 def test_gmail_message_detail_marks_matching_persona(monkeypatch):
     async def fake_detail(_db, _settings, _user, _message_id):
         from app.schemas import GmailMessageOut

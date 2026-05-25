@@ -262,6 +262,14 @@ class GmailSendIn(BaseModel):
     def reply_context_id_value(self) -> str | None:
         return self.replyContextId or self.reply_context_id
 
+    @field_validator("subject", "body")
+    @classmethod
+    def require_non_blank_content(cls, value: str, info):
+        if not value.strip():
+            label = "제목" if info.field_name == "subject" else "본문"
+            raise ValueError(f"{label}은 비워둘 수 없습니다.")
+        return value
+
 
 class GmailSendOut(BaseModel):
     id: str

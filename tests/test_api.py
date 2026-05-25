@@ -383,6 +383,22 @@ def test_generate_accepts_legacy_percentage_scale(monkeypatch):
     assert invalid.status_code == 422
 
 
+def test_generate_rejects_empty_generated_result(monkeypatch):
+    async def fake_stream(_settings, _messages):
+        yield "Subject:   \n"
+        yield "Body:\n   "
+
+    monkeypatch.setattr("app.routers.ai.stream_solar_text", fake_stream)
+    client, _ = authed_client()
+
+    response = client.post("/ai/generate", json={"brief": "빈 결과 방지", "tone": 3, "length": 3})
+
+    assert response.status_code == 200
+    assert "event: error" in response.text
+    assert "Solar 생성 결과가 비어 있습니다. 다시 시도해주세요." in response.text
+    assert client.get("/history").json() == []
+
+
 def test_generate_links_reply_sender_to_existing_persona(monkeypatch):
     async def fake_stream(_settings, _messages):
         yield "Subject: 답장 제목\n"

@@ -175,10 +175,7 @@ async def _google_get_json_with_client(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
-    if response.status_code == 429:
-        raise HTTPException(status_code=429, detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Google API 요청에 실패했습니다.")
+    _raise_google_api_error(response, fallback_detail="Google API 요청에 실패했습니다.")
     return response.json()
 
 
@@ -190,11 +187,28 @@ async def google_get_json(url: str, access_token: str, params: dict[str, Any] | 
 async def google_post_json(url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {access_token}"})
-    if response.status_code == 429:
-        raise HTTPException(status_code=429, detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Gmail 발송에 실패했습니다.")
+    _raise_google_api_error(response, fallback_detail="Gmail 발송에 실패했습니다.")
     return response.json()
+
+
+def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str) -> None:
+    if response.status_code == 401:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google 재인증이 필요합니다. 다시 로그인해주세요.",
+        )
+    if response.status_code == 403:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+        )
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
+        )
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=fallback_detail)
 
 
 def _headers_map(message: dict[str, Any]) -> dict[str, str]:

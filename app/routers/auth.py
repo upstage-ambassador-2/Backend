@@ -43,6 +43,12 @@ def _login_error_redirect(reason: str, settings: Settings) -> RedirectResponse:
     )
 
 
+async def _oauth_user_from_code(db: DbSession, settings: Settings, code: str) -> models.User:
+    token_payload = await exchange_code_for_token(settings, code)
+    userinfo = await fetch_userinfo(str(token_payload["access_token"]))
+    return upsert_oauth_user(db, settings, token_payload, userinfo)
+
+
 @router.post("/google/start", response_model=AuthStartOut)
 def google_start(payload: AuthStartIn, settings: AppSettings) -> AuthStartOut:
     state = sign_oauth_state({"next": _safe_frontend_redirect(payload.next, settings)}, settings)
@@ -69,9 +75,10 @@ async def google_callback(
     if not code:
         return _login_error_redirect("missing_code", settings)
 
-    token_payload = await exchange_code_for_token(settings, code)
-    userinfo = await fetch_userinfo(str(token_payload["access_token"]))
-    user = upsert_oauth_user(db, settings, token_payload, userinfo)
+    try:
+        user = await _oauth_user_from_code(db, settings, code)
+    except HTTPException:
+        return _login_error_redirect("oauth_failed", settings)
 
     raw_token = new_session_token()
     session = models.SessionToken(

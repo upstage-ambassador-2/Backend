@@ -58,6 +58,12 @@ def _oauth_start_next(client: TestClient, next_url: str | None) -> str:
     return load_oauth_state(state, get_settings())["next"]
 
 
+def _oauth_start_state(client: TestClient) -> str:
+    response = client.post("/auth/google/start", json={"next": "/"})
+    assert response.status_code == 200
+    return parse_qs(urlparse(response.json()["url"]).query)["state"][0]
+
+
 def test_google_start_constrains_redirect_to_frontend_origin():
     client = TestClient(app)
 
@@ -93,6 +99,46 @@ def test_google_callback_invalid_state_redirects_to_login_without_session():
 
     assert response.status_code == 303
     assert response.headers["location"] == "http://localhost:3000/login?auth_error=invalid_state"
+    assert "mello_session" not in response.cookies
+
+
+def test_google_callback_token_exchange_failure_redirects_to_login_without_session(monkeypatch):
+    async def fake_exchange_code_for_token(_settings, _code):
+        raise HTTPException(status_code=502, detail="token exchange failed")
+
+    monkeypatch.setattr("app.routers.auth.exchange_code_for_token", fake_exchange_code_for_token)
+    client = TestClient(app)
+    state = _oauth_start_state(client)
+
+    response = client.get(
+        f"/auth/google/callback?code=bad-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3000/login?auth_error=oauth_failed"
+    assert "mello_session" not in response.cookies
+
+
+def test_google_callback_userinfo_failure_redirects_to_login_without_session(monkeypatch):
+    async def fake_exchange_code_for_token(_settings, _code):
+        return {"access_token": "bad-access-token", "expires_in": 3600}
+
+    async def fake_fetch_userinfo(_access_token):
+        raise HTTPException(status_code=502, detail="userinfo failed")
+
+    monkeypatch.setattr("app.routers.auth.exchange_code_for_token", fake_exchange_code_for_token)
+    monkeypatch.setattr("app.routers.auth.fetch_userinfo", fake_fetch_userinfo)
+    client = TestClient(app)
+    state = _oauth_start_state(client)
+
+    response = client.get(
+        f"/auth/google/callback?code=valid-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3000/login?auth_error=oauth_failed"
     assert "mello_session" not in response.cookies
 
 

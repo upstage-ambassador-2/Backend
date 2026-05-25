@@ -1,4 +1,4 @@
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -34,6 +34,15 @@ def _safe_frontend_redirect(next_url: str | None, settings: Settings) -> str:
     return urlunsplit((frontend.scheme, frontend.netloc, path or "/", parsed.query, parsed.fragment))
 
 
+def _login_error_redirect(reason: str, settings: Settings) -> RedirectResponse:
+    frontend = urlsplit(settings.frontend_url)
+    query = urlencode({"auth_error": reason})
+    return RedirectResponse(
+        urlunsplit((frontend.scheme, frontend.netloc, "/login", query, "")),
+        status_code=303,
+    )
+
+
 @router.post("/google/start", response_model=AuthStartOut)
 def google_start(payload: AuthStartIn, settings: AppSettings) -> AuthStartOut:
     state = sign_oauth_state({"next": _safe_frontend_redirect(payload.next, settings)}, settings)
@@ -44,13 +53,21 @@ def google_start(payload: AuthStartIn, settings: AppSettings) -> AuthStartOut:
 async def google_callback(
     db: DbSession,
     settings: AppSettings,
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
 ):
+    if error:
+        reason = "access_denied" if error == "access_denied" else "oauth_failed"
+        return _login_error_redirect(reason, settings)
+    if not state:
+        return _login_error_redirect("invalid_state", settings)
     try:
         state_payload = load_oauth_state(state, settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="OAuth state가 올바르지 않습니다.") from exc
+    except ValueError:
+        return _login_error_redirect("invalid_state", settings)
+    if not code:
+        return _login_error_redirect("missing_code", settings)
 
     token_payload = await exchange_code_for_token(settings, code)
     userinfo = await fetch_userinfo(str(token_payload["access_token"]))

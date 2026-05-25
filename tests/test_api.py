@@ -1,6 +1,9 @@
+import asyncio
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+import httpx
 
 os.environ["DATABASE_URL"] = "sqlite:///./test-mello.db"
 os.environ["SECRET_KEY"] = "test-secret-key-with-enough-length"
@@ -9,6 +12,7 @@ os.environ["GOOGLE_CLIENT_ID"] = "test-google-client"
 os.environ["GOOGLE_REDIRECT_URI"] = "http://localhost:8000/auth/google/callback"
 os.environ["FRONTEND_URL"] = "http://localhost:3000"
 
+from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models  # noqa: E402
@@ -16,6 +20,7 @@ from app.config import get_settings  # noqa: E402
 from app.database import Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.security import hash_token, load_oauth_state, session_expiry  # noqa: E402
+from app.services import google as google_service  # noqa: E402
 
 
 def setup_function():
@@ -334,6 +339,36 @@ def test_gmail_send_rejects_blank_subject_or_body(monkeypatch):
     assert "제목은 비워둘 수 없습니다." in blank_subject.text
     assert blank_body.status_code == 422
     assert "본문은 비워둘 수 없습니다." in blank_body.text
+
+
+def test_google_post_json_maps_auth_and_retry_errors(monkeypatch):
+    original_async_client = google_service.httpx.AsyncClient
+
+    def call_with_status(status_code: int) -> tuple[int, str]:
+        transport = httpx.MockTransport(lambda _request: httpx.Response(status_code, json={}))
+        monkeypatch.setattr(
+            google_service.httpx,
+            "AsyncClient",
+            lambda *args, **kwargs: original_async_client(transport=transport),
+        )
+        try:
+            asyncio.run(
+                google_service.google_post_json("https://gmail.test/send", "token", {"raw": "x"})
+            )
+        except HTTPException as exc:
+            return exc.status_code, str(exc.detail)
+        raise AssertionError("Google API error was not raised")
+
+    assert call_with_status(401) == (401, "Google 재인증이 필요합니다. 다시 로그인해주세요.")
+    assert call_with_status(403) == (
+        403,
+        "Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    )
+    assert call_with_status(429) == (
+        429,
+        "Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
+    )
+    assert call_with_status(500) == (502, "Gmail 발송에 실패했습니다.")
 
 
 def test_gmail_message_detail_marks_matching_persona(monkeypatch):

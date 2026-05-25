@@ -1,8 +1,11 @@
+from urllib.parse import urlsplit, urlunsplit
+
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
 from app import models
+from app.config import Settings
 from app.deps import AppSettings, DbSession
 from app.security import hash_token, load_oauth_state, new_session_token, session_expiry, sign_oauth_state
 from app.services.google import build_google_auth_url, exchange_code_for_token, fetch_userinfo, upsert_oauth_user
@@ -12,9 +15,28 @@ from app.schemas import AuthStartIn, AuthStartOut
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _safe_frontend_redirect(next_url: str | None, settings: Settings) -> str:
+    frontend = urlsplit(settings.frontend_url)
+    fallback = settings.frontend_url
+    candidate = (next_url or "").strip()
+    if not candidate:
+        return fallback
+
+    parsed = urlsplit(candidate)
+    if parsed.scheme or parsed.netloc:
+        same_origin = (
+            parsed.scheme.lower() == frontend.scheme.lower()
+            and parsed.netloc.lower() == frontend.netloc.lower()
+        )
+        return urlunsplit(parsed) if same_origin else fallback
+
+    path = parsed.path if parsed.path.startswith("/") else f"/{parsed.path}"
+    return urlunsplit((frontend.scheme, frontend.netloc, path or "/", parsed.query, parsed.fragment))
+
+
 @router.post("/google/start", response_model=AuthStartOut)
 def google_start(payload: AuthStartIn, settings: AppSettings) -> AuthStartOut:
-    state = sign_oauth_state({"next": payload.next or settings.frontend_url}, settings)
+    state = sign_oauth_state({"next": _safe_frontend_redirect(payload.next, settings)}, settings)
     return AuthStartOut(url=build_google_auth_url(settings, state))
 
 

@@ -1,9 +1,13 @@
 import os
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 os.environ["DATABASE_URL"] = "sqlite:///./test-mello.db"
 os.environ["SECRET_KEY"] = "test-secret-key-with-enough-length"
 os.environ["SOLAR_API_KEY"] = "test-solar-key"
+os.environ["GOOGLE_CLIENT_ID"] = "test-google-client"
+os.environ["GOOGLE_REDIRECT_URI"] = "http://localhost:8000/auth/google/callback"
+os.environ["FRONTEND_URL"] = "http://localhost:3000"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -11,7 +15,7 @@ from app import models  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.database import Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.security import hash_token, session_expiry  # noqa: E402
+from app.security import hash_token, load_oauth_state, session_expiry  # noqa: E402
 
 
 def setup_function():
@@ -38,6 +42,25 @@ def authed_client() -> tuple[TestClient, models.User]:
     client = TestClient(app)
     client.cookies.set("mello_session", token)
     return client, user
+
+
+def _oauth_start_next(client: TestClient, next_url: str | None) -> str:
+    response = client.post("/auth/google/start", json={"next": next_url})
+    assert response.status_code == 200
+    state = parse_qs(urlparse(response.json()["url"]).query)["state"][0]
+    return load_oauth_state(state, get_settings())["next"]
+
+
+def test_google_start_constrains_redirect_to_frontend_origin():
+    client = TestClient(app)
+
+    assert (
+        _oauth_start_next(client, "/compose?reply=1")
+        == "http://localhost:3000/compose?reply=1"
+    )
+    assert _oauth_start_next(client, "http://localhost:3000/inbox") == "http://localhost:3000/inbox"
+    assert _oauth_start_next(client, "https://evil.example/phishing") == "http://localhost:3000"
+    assert _oauth_start_next(client, "//evil.example/phishing") == "http://localhost:3000"
 
 
 def test_me_and_format_roundtrip():

@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import os
+from email import message_from_bytes
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -369,6 +371,52 @@ def test_google_post_json_maps_auth_and_retry_errors(monkeypatch):
         "Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
     )
     assert call_with_status(500) == (502, "Gmail 발송에 실패했습니다.")
+
+
+def test_send_gmail_message_preserves_reply_thread_headers(monkeypatch):
+    captured = {}
+
+    async def fake_access_token(_db, _settings, _user):
+        return "gmail-access-token"
+
+    async def fake_google_post_json(_url, access_token, payload):
+        captured.update({"access_token": access_token, "payload": payload})
+        return {"id": "gmail-out-1", "threadId": payload.get("threadId")}
+
+    monkeypatch.setattr(google_service, "google_access_token", fake_access_token)
+    monkeypatch.setattr(google_service, "google_post_json", fake_google_post_json)
+
+    user = models.User(email="user@example.com", name="Tester")
+    reply_context = models.ReplyContext(
+        thread_id="thread-1",
+        message_id="<message-1@example.com>",
+        references="<root@example.com>",
+    )
+
+    result = asyncio.run(
+        google_service.send_gmail_message(
+            db=None,
+            settings=get_settings(),
+            user=user,
+            to="lead@example.com",
+            subject="Re: 일정 확인",
+            body="확인했습니다.",
+            cc=[],
+            bcc=[],
+            reply_context=reply_context,
+        )
+    )
+
+    raw_message = message_from_bytes(
+        base64.urlsafe_b64decode(captured["payload"]["raw"])
+    )
+    assert result == {"id": "gmail-out-1", "threadId": "thread-1"}
+    assert captured["access_token"] == "gmail-access-token"
+    assert captured["payload"]["threadId"] == "thread-1"
+    assert raw_message["From"] == "user@example.com"
+    assert raw_message["To"] == "lead@example.com"
+    assert raw_message["In-Reply-To"] == "<message-1@example.com>"
+    assert raw_message["References"] == "<root@example.com> <message-1@example.com>"
 
 
 def test_gmail_message_detail_marks_matching_persona(monkeypatch):

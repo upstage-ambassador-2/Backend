@@ -68,6 +68,8 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession, settin
                 yield sse("delta", {"text": token})
 
             draft = parse_generated_draft("".join(raw_parts))
+            if not draft.subject.strip() or not draft.body.strip():
+                raise HTTPException(status_code=502, detail="Solar 생성 결과가 비어 있습니다. 다시 시도해주세요.")
             with SessionLocal() as session:
                 history = models.HistoryItem(
                     user_id=user_id,

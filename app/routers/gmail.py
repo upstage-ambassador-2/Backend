@@ -104,6 +104,8 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
     if recipient_persona:
         recipient_persona.last_used_at = models.utcnow()
     if history:
+        history.subject = payload.subject
+        history.body = payload.body
         history.status = "sent"
         history.gmail_message_id = str(result.get("id") or "")
         history.sent_at = models.utcnow()

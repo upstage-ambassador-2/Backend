@@ -337,6 +337,67 @@ def test_history_endpoint_returns_frontend_compatible_shape():
     assert item["lengthValue"] == 4
 
 
+def test_history_draft_update_and_reset():
+    client, user = authed_client()
+    with SessionLocal() as db:
+        history = models.HistoryItem(
+            user_id=user.id,
+            brief="초안 수정",
+            subject="기존 제목",
+            body="기존 본문",
+            status="draft",
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    updated = client.patch(
+        f"/history/{history_id}/draft",
+        json={"subject": "수정 제목", "body": "수정 본문입니다."},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["subject"] == "수정 제목"
+    assert updated.json()["body"] == "수정 본문입니다."
+    assert updated.json()["prev"] == "수정 본문입니다."
+    assert client.get(f"/history/{history_id}").json()["body"] == "수정 본문입니다."
+
+    reset = client.post(f"/history/{history_id}/draft/reset")
+
+    assert reset.status_code == 200
+    assert reset.json()["subject"] == ""
+    assert reset.json()["body"] == ""
+    assert reset.json()["prev"] == ""
+
+
+def test_history_draft_update_rejects_sent_history():
+    client, user = authed_client()
+    with SessionLocal() as db:
+        history = models.HistoryItem(
+            user_id=user.id,
+            brief="발송 완료",
+            subject="발송 제목",
+            body="발송 본문",
+            status="sent",
+            gmail_message_id="gmail-sent-1",
+            sent_at=models.utcnow(),
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    updated = client.patch(
+        f"/history/{history_id}/draft",
+        json={"body": "수정하면 안 되는 본문"},
+    )
+    reset = client.post(f"/history/{history_id}/draft/reset")
+
+    assert updated.status_code == 409
+    assert updated.json()["detail"] == "발송 완료된 히스토리는 수정할 수 없습니다."
+    assert reset.status_code == 409
+    assert client.get(f"/history/{history_id}").json()["body"] == "발송 본문"
+
+
 def test_generate_stream_persists_history(monkeypatch):
     async def fake_stream(_settings, _messages):
         yield "Subject: 테스트 제목\n"
@@ -475,6 +536,42 @@ def test_gmail_send_uses_history_persona_email_and_updates_history(monkeypatch):
     payload = response.json()
     assert payload["history"]["status"] == "sent"
     assert payload["history"]["personaEmail"] == "lead@example.com"
+
+
+def test_gmail_send_persists_latest_payload_to_history(monkeypatch):
+    async def fake_send_gmail_message(_db, _settings, _user, *, to, subject, body, cc, bcc, reply_context):
+        assert subject == "수정된 제목"
+        assert body == "수정된 본문"
+        return {"id": "gmail-edited-1", "threadId": "thread-edited-1"}
+
+    monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com")
+        db.add(persona)
+        db.flush()
+        history = models.HistoryItem(
+            user_id=user.id,
+            persona_id=persona.id,
+            brief="즉시 발송",
+            subject="기존 제목",
+            body="기존 본문",
+            status="draft",
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    response = client.post(
+        "/gmail/send",
+        json={"historyId": history_id, "subject": "수정된 제목", "body": "수정된 본문"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["history"]["subject"] == "수정된 제목"
+    assert payload["history"]["body"] == "수정된 본문"
+    assert client.get(f"/history/{history_id}").json()["body"] == "수정된 본문"
 
 
 def test_gmail_send_does_not_resend_already_sent_history(monkeypatch):

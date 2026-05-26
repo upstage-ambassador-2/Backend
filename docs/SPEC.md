@@ -140,16 +140,19 @@
 ## Technical Context (Brownfield)
 
 ### 현재 UI 구조 (탐색 결과)
-- **단일 SPA**: `app/page.tsx → MelloApp.tsx`가 클라이언트 상태로 라우팅
-- **내부 라우트** (state 기반): `compose`, `people`, `history`, `format`, `settings`
+- **기능 단위 App Router 페이지**: `/compose/{persona_id}`, `/inbox`, `/people`, `/history`, `/format`, `/settings`
+- **작성 대상 단위 라우팅**: `/compose`는 첫 번째 persona의 `/compose/{persona_id}`로 redirect하고, 상대방 변경도 URL 세그먼트로 표현
+- **SSR 앱 셸**: `app/(app)/layout.tsx`가 쿠키 기반 세션을 확인하고 초기 데이터를 서버에서 조회한 뒤 `MelloShell`에 전달
+- **공개/인증 라우트 분리**: `/login`은 비로그인 전용, `/`는 인증 상태에 따라 `/compose` 또는 `/login`으로 redirect
 - **mock 데이터**: `lib/data.ts`에 정의 ("Shape preserved verbatim so a future API can return the same payload" 주석)
-- **의존성**: `next@14.2.18`, `react@18.3.1`만. shadcn/Tailwind/auth lib 없음, 순수 CSS
+- **의존성**: `next@14.2.35`, `react@18.3.1`만. shadcn/Tailwind/auth lib 없음, 순수 CSS
 
 ### 백엔드 결합으로 변경되는 부분
 - `lib/data.ts` → API 클라이언트(`lib/api.ts`)로 대체, 같은 shape 유지
-- `MelloApp.tsx`: 라우트 enum에 `inbox` 추가, 인증 가드 추가
+- `MelloShell.tsx`: SSR 초기 데이터 기반 앱 셸, pathname 기반 breadcrumb/active navigation
+- `components/routes/*Route.tsx`: 기능별 page에서 렌더링되는 client route entry
 - `ComposerScreen.tsx`: 버전 선택자 제거, SSE 스트리밍 핸들러 추가, reply_context 주입 받음
-- `Sidebar.tsx`: "받은편지함" 항목 추가
+- `Sidebar.tsx`: "받은편지함" 항목 추가, `next/link` 기반 기능 라우팅, 자주 보내는 사람은 `/compose/{persona_id}`로 이동
 - 신규 컴포넌트: `InboxScreen.tsx`, `LoginScreen.tsx`
 - `Settings → 통합`: Gmail/Contacts는 OAuth 상태와 연결, Slack/Notion은 비활성
 

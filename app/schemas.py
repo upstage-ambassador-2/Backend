@@ -204,6 +204,17 @@ class HistoryOut(BaseModel):
     prev: str
 
 
+class HistoryDraftPatchIn(BaseModel):
+    subject: str | None = None
+    body: str | None = None
+
+    @model_validator(mode="after")
+    def require_update_field(self):
+        if self.subject is None and self.body is None:
+            raise ValueError("수정할 초안 내용이 필요합니다.")
+        return self
+
+
 class GmailMessageOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -261,6 +272,14 @@ class GmailSendIn(BaseModel):
     @property
     def reply_context_id_value(self) -> str | None:
         return self.replyContextId or self.reply_context_id
+
+    @field_validator("subject", "body")
+    @classmethod
+    def require_non_blank_content(cls, value: str, info):
+        if not value.strip():
+            label = "제목" if info.field_name == "subject" else "본문"
+            raise ValueError(f"{label}은 비워둘 수 없습니다.")
+        return value
 
 
 class GmailSendOut(BaseModel):

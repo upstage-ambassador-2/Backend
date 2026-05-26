@@ -4,7 +4,7 @@ from sqlalchemy.orm import selectinload
 
 from app import models
 from app.deps import CurrentUser, DbSession
-from app.schemas import HistoryOut
+from app.schemas import HistoryDraftPatchIn, HistoryOut
 from app.serializers import history_out
 from app.services.people import normalize_email
 
@@ -50,4 +50,40 @@ def get_history(history_id: str, user: CurrentUser, db: DbSession) -> HistoryOut
     item = db.get(models.HistoryItem, history_id)
     if not item or item.user_id != user.id:
         raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
+    return history_out(item)
+
+
+def _editable_history(history_id: str, user: CurrentUser, db: DbSession) -> models.HistoryItem:
+    item = db.get(models.HistoryItem, history_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
+    if item.status == "sent":
+        raise HTTPException(status_code=409, detail="발송 완료된 히스토리는 수정할 수 없습니다.")
+    return item
+
+
+@router.patch("/{history_id}/draft", response_model=HistoryOut)
+def update_history_draft(
+    history_id: str,
+    payload: HistoryDraftPatchIn,
+    user: CurrentUser,
+    db: DbSession,
+) -> HistoryOut:
+    item = _editable_history(history_id, user, db)
+    if payload.subject is not None:
+        item.subject = payload.subject
+    if payload.body is not None:
+        item.body = payload.body
+    db.commit()
+    db.refresh(item)
+    return history_out(item)
+
+
+@router.post("/{history_id}/draft/reset", response_model=HistoryOut)
+def reset_history_draft(history_id: str, user: CurrentUser, db: DbSession) -> HistoryOut:
+    item = _editable_history(history_id, user, db)
+    item.subject = ""
+    item.body = ""
+    db.commit()
+    db.refresh(item)
     return history_out(item)

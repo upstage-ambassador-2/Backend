@@ -173,28 +173,63 @@ async def _google_get_json_with_client(
     url: str,
     access_token: str,
     params: dict[str, Any] | None = None,
+    *,
+    fallback_detail: str = "Google API 요청에 실패했습니다.",
+    forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
 ) -> dict[str, Any]:
     response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
-    if response.status_code == 429:
-        raise HTTPException(status_code=429, detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Google API 요청에 실패했습니다.")
+    _raise_google_api_error(response, fallback_detail=fallback_detail, forbidden_detail=forbidden_detail)
     return response.json()
 
 
-async def google_get_json(url: str, access_token: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+async def google_get_json(
+    url: str,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    *,
+    fallback_detail: str = "Google API 요청에 실패했습니다.",
+    forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
-        return await _google_get_json_with_client(client, url, access_token, params)
+        return await _google_get_json_with_client(
+            client,
+            url,
+            access_token,
+            params,
+            fallback_detail=fallback_detail,
+            forbidden_detail=forbidden_detail,
+        )
 
 
 async def google_post_json(url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {access_token}"})
-    if response.status_code == 429:
-        raise HTTPException(status_code=429, detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Gmail 발송에 실패했습니다.")
+    _raise_google_api_error(
+        response,
+        fallback_detail="Gmail 발송에 실패했습니다.",
+        forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    )
     return response.json()
+
+
+def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str, forbidden_detail: str) -> None:
+    if response.status_code == 401:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google 재인증이 필요합니다. 다시 로그인해주세요.",
+        )
+    if response.status_code == 403:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=forbidden_detail,
+        )
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
+        )
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=fallback_detail)
 
 
 def _headers_map(message: dict[str, Any]) -> dict[str, str]:
@@ -259,6 +294,10 @@ def _sent_by_current_user(user: models.User, message: GmailMessageOut) -> bool:
     return normalize_email(message.senderEmail or message.fromAddr) == normalize_email(user.email)
 
 
+def _normalize_contact_name(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
 async def list_gmail_messages(
     db: Session,
     settings: Settings,
@@ -276,6 +315,8 @@ async def list_gmail_messages(
             f"{GMAIL_API}/messages",
             access_token,
             params=params,
+            fallback_detail="Gmail 받은편지함 조회에 실패했습니다.",
+            forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
         )
         messages = (listing.get("messages") or [])[:limit]
         semaphore = asyncio.Semaphore(8)
@@ -290,6 +331,8 @@ async def list_gmail_messages(
                         "format": "metadata",
                         "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"],
                     },
+                    fallback_detail="Gmail 메시지 조회에 실패했습니다.",
+                    forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
                 )
                 return gmail_message_out(detail)
 
@@ -307,7 +350,13 @@ async def list_gmail_messages(
 
 async def get_gmail_message_detail(db: Session, settings: Settings, user: models.User, message_id: str) -> tuple[GmailMessageOut, str]:
     access_token = await google_access_token(db, settings, user)
-    detail = await google_get_json(f"{GMAIL_API}/messages/{message_id}", access_token, params={"format": "full"})
+    detail = await google_get_json(
+        f"{GMAIL_API}/messages/{message_id}",
+        access_token,
+        params={"format": "full"},
+        fallback_detail="Gmail 메시지 조회에 실패했습니다.",
+        forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    )
     message = enrich_gmail_message_persona(db, user, gmail_message_out(detail))
     body = _plain_text_from_payload(detail.get("payload", {}))
     return message, body
@@ -346,21 +395,29 @@ async def import_contacts(db: Session, settings: Settings, user: models.User, li
             "personFields": "names,emailAddresses,metadata",
             "sortOrder": "LAST_MODIFIED_DESCENDING",
         },
+        fallback_detail="Google Contacts를 가져오지 못했습니다.",
+        forbidden_detail="Google Contacts 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
     )
     imported: list[models.Persona] = []
+    existing_names = {
+        _normalize_contact_name(name)
+        for name in db.scalars(select(models.Persona.name).where(models.Persona.user_id == user.id)).all()
+    }
     skipped = 0
     for person in payload.get("connections", [])[:limit]:
         names = person.get("names") or []
         emails = person.get("emailAddresses") or []
         name = (names[0].get("displayName") if names else "") or ""
         email = normalize_email((emails[0].get("value") if emails else "") or None)
-        if not name or not email:
+        normalized_name = _normalize_contact_name(name)
+        if not normalized_name or not email:
             skipped += 1
             continue
         exists = find_persona_by_email(db, user.id, email)
-        if exists:
+        if exists or normalized_name in existing_names:
             skipped += 1
             continue
+        existing_names.add(normalized_name)
         persona = models.Persona(
             user_id=user.id,
             name=name,

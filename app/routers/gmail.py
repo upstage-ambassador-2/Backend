@@ -58,6 +58,13 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
     history = db.get(models.HistoryItem, payload.history_id_value) if payload.history_id_value else None
     if payload.history_id_value and (not history or history.user_id != user.id):
         raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
+    if history and history.status == "sent" and history.gmail_message_id:
+        return GmailSendOut(
+            id=history.gmail_message_id,
+            threadId=None,
+            history=history_out(history),
+            raw={"id": history.gmail_message_id, "deduplicated": True},
+        )
 
     reply_context = None
     if payload.reply_context_id_value:
@@ -97,6 +104,8 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
     if recipient_persona:
         recipient_persona.last_used_at = models.utcnow()
     if history:
+        history.subject = payload.subject
+        history.body = payload.body
         history.status = "sent"
         history.gmail_message_id = str(result.get("id") or "")
         history.sent_at = models.utcnow()

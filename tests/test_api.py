@@ -18,7 +18,7 @@ from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models  # noqa: E402
-from app.config import get_settings  # noqa: E402
+from app.config import GOOGLE_SCOPES, get_settings  # noqa: E402
 from app.database import Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.security import hash_token, load_oauth_state, session_expiry  # noqa: E402
@@ -121,6 +121,19 @@ def test_google_start_constrains_redirect_to_frontend_origin():
     assert _oauth_start_next(client, "http://localhost:3000/inbox") == "http://localhost:3000/inbox"
     assert _oauth_start_next(client, "https://evil.example/phishing") == "http://localhost:3000"
     assert _oauth_start_next(client, "//evil.example/phishing") == "http://localhost:3000"
+
+
+def test_google_start_requests_required_google_scopes():
+    client = TestClient(app)
+
+    response = client.post("/auth/google/start", json={"next": "/settings"})
+
+    assert response.status_code == 200
+    params = parse_qs(urlparse(response.json()["url"]).query)
+    assert set(params["scope"][0].split()) == set(GOOGLE_SCOPES)
+    assert params["access_type"] == ["offline"]
+    assert params["prompt"] == ["consent"]
+    assert params["include_granted_scopes"] == ["true"]
 
 
 def test_google_callback_cancel_redirects_to_login_without_session():

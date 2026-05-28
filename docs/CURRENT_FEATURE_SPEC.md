@@ -134,8 +134,11 @@ Solar 기반 SSE 메일 초안 생성
 - Compose 화면에서 brief를 입력하거나 reply context가 있는 상태에서 `Mello에게 작성 요청`을 누른다.
 - 프론트엔드는 `POST /ai/generate`를 호출하고 SSE stream을 읽는다.
 - 백엔드는 persona, reply context, mail format을 조회하고 Solar 프롬프트를 구성한다.
+- Solar 프롬프트에는 persona의 피해야 할 표현을 그대로 쓰지 말 것과, 서명이 있으면 본문 끝에 포함할 것을 명시한다.
 - 생성 중 `delta` event로 텍스트 청크를 보낸다.
 - 완료 시 `done` event로 `subject`, `body`, `history`를 반환한다.
+- 백엔드는 완료 직후 최종 draft를 검증해 mail format signature가 빠져 있으면 저장 전 본문 끝에 보강한다.
+- 백엔드는 완료 직후 최종 draft의 subject/body에 persona 금지 표현이 포함되면 `error` event를 반환하고 history를 생성하지 않는다.
 - 생성 완료 후 history는 `draft` 상태로 저장된다.
 - `다시 생성`은 같은 입력으로 생성 API를 재호출한다.
 - 새 stream의 첫 `delta`가 오면 이전 표시 결과를 새 결과로 교체한다.

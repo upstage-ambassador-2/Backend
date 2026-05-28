@@ -523,7 +523,7 @@ def test_generate_stream_persists_history(monkeypatch):
     history = client.get("/history").json()
     assert len(history) == 1
     assert history[0]["subject"] == "테스트 제목"
-    assert history[0]["body"] == "테스트 본문입니다."
+    assert history[0]["body"] == "테스트 본문입니다.\n\nTester\nuser@example.com"
     assert history[0]["tone"] == "중립"
     assert history[0]["toneValue"] == 3
     assert history[0]["length"] == "보통"
@@ -564,6 +564,35 @@ def test_generate_rejects_empty_generated_result(monkeypatch):
     assert response.status_code == 200
     assert "event: error" in response.text
     assert "Solar 생성 결과가 비어 있습니다. 다시 시도해주세요." in response.text
+    assert client.get("/history").json() == []
+
+
+def test_generate_rejects_forbidden_persona_terms(monkeypatch):
+    async def fake_stream(_settings, _messages):
+        yield "Subject: 일정 공유\n"
+        yield "Body:\n모호한 표현으로 답변드립니다."
+
+    monkeypatch.setattr("app.routers.ai.stream_solar_text", fake_stream)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(
+            user_id=user.id,
+            name="김지훈 팀장",
+            email="lead@example.com",
+            avoid="모호한 표현",
+        )
+        db.add(persona)
+        db.commit()
+        persona_id = persona.id
+
+    response = client.post(
+        "/ai/generate",
+        json={"brief": "일정 공유", "tone": 3, "length": 3, "personaId": persona_id},
+    )
+
+    assert response.status_code == 200
+    assert "event: error" in response.text
+    assert "생성 결과에 피해야 할 표현이 포함되었습니다: 모호한 표현. 다시 생성해주세요." in response.text
     assert client.get("/history").json() == []
 
 

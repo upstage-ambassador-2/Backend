@@ -69,6 +69,10 @@ Body:
 - 기본 언어: {mail_format.language}
 - 서명: {mail_format.signature}
 
+검증 규칙:
+- 페르소나의 피해야 할 표현을 제목이나 본문에 그대로 사용하지 않는다.
+- 서명이 제공되면 본문 마지막에 서명을 포함한다.
+
 작성 옵션:
 - 톤: {describe_tone(tone)}
 - 길이: {describe_length(length)}
@@ -207,6 +211,64 @@ def parse_generated_draft(text: str) -> GeneratedDraft:
     first = re.sub(r"^(Subject|제목)\s*:\s*", "", nonempty[0], flags=re.IGNORECASE)
     body = "\n".join(lines[1:]).strip() if len(lines) > 1 else first
     return GeneratedDraft(subject=first[:120], body=body)
+
+
+def _normalize_for_match(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _policy_lines(value: str | None) -> list[str]:
+    if not value:
+        return []
+    items: list[str] = []
+    for raw in re.split(r"[\n,]", value):
+        item = raw.strip()
+        if item and item not in items:
+            items.append(item)
+    return items
+
+
+def _ensure_signature(body: str, signature: str) -> str:
+    clean_signature = signature.strip()
+    if not clean_signature:
+        return body.strip()
+    normalized_body = _normalize_for_match(body)
+    normalized_signature = _normalize_for_match(clean_signature)
+    if normalized_signature and normalized_signature in normalized_body:
+        return body.strip()
+    return f"{body.strip()}\n\n{clean_signature}"
+
+
+def _forbidden_terms_in_draft(draft: GeneratedDraft, persona: models.Persona | None) -> list[str]:
+    if not persona:
+        return []
+    haystack = _normalize_for_match(f"{draft.subject}\n{draft.body}")
+    found: list[str] = []
+    for term in _policy_lines(persona.avoid):
+        normalized = _normalize_for_match(term)
+        if normalized and normalized in haystack:
+            found.append(term)
+    return found
+
+
+def apply_generation_guardrails(
+    draft: GeneratedDraft,
+    *,
+    persona: models.Persona | None,
+    mail_format: models.MailFormat,
+) -> GeneratedDraft:
+    guarded = GeneratedDraft(
+        subject=draft.subject.strip(),
+        body=_ensure_signature(draft.body, mail_format.signature),
+    )
+    forbidden_terms = _forbidden_terms_in_draft(guarded, persona)
+    if forbidden_terms:
+        preview = ", ".join(forbidden_terms[:3])
+        raise HTTPException(
+            status_code=502,
+            detail=f"생성 결과에 피해야 할 표현이 포함되었습니다: {preview}. 다시 생성해주세요.",
+        )
+    return guarded
 
 
 def _trim_list(value: object, *, limit: int = 6) -> list[str]:

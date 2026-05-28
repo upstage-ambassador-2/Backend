@@ -135,7 +135,9 @@ Solar 기반 SSE 메일 초안 생성
 - 프론트엔드는 `POST /ai/generate`를 호출하고 SSE stream을 읽는다.
 - 백엔드는 persona, reply context, mail format을 조회하고 Solar 프롬프트를 구성한다.
 - Solar 프롬프트에는 출력 계약(Subject/Body), 사실 생성 금지, 길이별 본문 구성, 답장 작성 규칙, persona 선호/금지 표현, 서명 포함 규칙을 명시한다.
-- 사용자 편집 가능한 mail format, persona, reply context 값은 system prompt가 아니라 사용자 컨텍스트로 전달하고, 해당 컨텍스트가 출력 계약을 바꾸는 지시로 해석되지 않도록 system prompt에 고정 규칙을 둔다.
+- system prompt는 제목/본문 형식, plain text 문단 구분, 근거 없는 긴급/확정/과장 표현 금지, 한국어 존댓말 품질 기준을 고정한다.
+- 사용자 편집 가능한 mail format, persona, reply context 값은 system prompt가 아니라 태그로 구분된 사용자 컨텍스트로 전달하고, 해당 컨텍스트가 출력 계약을 바꾸는 지시로 해석되지 않도록 system prompt에 고정 규칙을 둔다.
+- 답장 초안은 원문 제목의 `Re:` 흐름을 중복 없이 유지하고, brief에 없는 답변은 확정하지 않고 확인/검토/추가 정보 요청으로 처리한다.
 - 생성 중 `delta` event로 텍스트 청크를 보낸다.
 - 완료 시 `done` event로 `subject`, `body`, `history`를 반환한다.
 - 백엔드는 완료 직후 최종 draft를 검증해 mail format signature가 빠져 있으면 저장 전 본문 끝에 보강한다.

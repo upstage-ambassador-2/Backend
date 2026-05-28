@@ -217,6 +217,7 @@ AI가 생성한 초안과 Gmail 발송 상태를 사용자별로 저장하고, H
 - 상세 조회 성공 시 API 응답의 subject, body, 대상 정보를 detail panel에 표시한다.
 - 같은 row를 다시 열 때는 row id 기준으로 캐시된 상세 데이터를 재사용한다.
 - 상세 조회 실패 시 detail panel 안에 실패 문구를 표시하고 목록 화면은 유지한다.
+- detail panel의 삭제 버튼은 확인 후 `DELETE /history/{id}`를 호출하고, 성공 시 앱 shell의 history 목록에서 항목을 제거한다.
 - 닫기 버튼 또는 열린 row 재클릭으로 detail panel을 닫는다.
 - 필터/검색 변경으로 열린 row가 목록에서 사라지면 detail panel을 닫는다.
 - persona가 삭제되었거나 목록 응답에 persona 관계가 없더라도 `personaName`, `personaEmail`, `counterpartyName`, `counterpartyEmail`, `replyFromAddr` fallback으로 대상 정보를 표시한다.
@@ -234,13 +235,14 @@ Compose, Gmail send, Persona, ReplyContext, mock API
 - 발송 완료 history는 수정/초기화되지 않는다.
 - Gmail 발송 직전의 최신 subject/body가 history에 남는다.
 - History row 클릭 시 `GET /history/{id}`가 호출된다.
+- History detail panel에서 삭제를 확인하면 `DELETE /history/{id}`가 호출되고 목록 count가 갱신된다.
 - 상세 panel은 전체 subject/body와 대상 정보를 표시한다.
 - 상세 조회 실패가 전체 History 화면을 깨뜨리지 않는다.
 - 필터, 검색, 삭제된 persona fallback이 기존 History 탐색 흐름을 유지한다.
 
 ### 후순위/제외 범위
 - 서버 검색 파라미터 기반 `/history?q=` 구현은 현재 범위에서 제외하고 클라이언트 필터로 유지한다.
-- History 삭제, 페이지네이션, 대량 데이터 최적화는 후순위로 둔다.
+- History 페이지네이션과 대량 데이터 최적화는 후순위로 둔다.
 
 ## 10. Local Mock E2E 지원
 

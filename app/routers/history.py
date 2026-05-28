@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -51,6 +51,16 @@ def get_history(history_id: str, user: CurrentUser, db: DbSession) -> HistoryOut
     if not item or item.user_id != user.id:
         raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
     return history_out(item)
+
+
+@router.delete("/{history_id}", status_code=204)
+def delete_history(history_id: str, user: CurrentUser, db: DbSession) -> Response:
+    item = db.get(models.HistoryItem, history_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
+    db.delete(item)
+    db.commit()
+    return Response(status_code=204)
 
 
 def _editable_history(history_id: str, user: CurrentUser, db: DbSession) -> models.HistoryItem:

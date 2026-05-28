@@ -337,6 +337,47 @@ def test_history_endpoint_returns_frontend_compatible_shape():
     assert item["lengthValue"] == 4
 
 
+def test_history_delete_removes_owned_history_only():
+    client, user = authed_client()
+    with SessionLocal() as db:
+        own_history = models.HistoryItem(
+            user_id=user.id,
+            brief="삭제 대상",
+            subject="삭제 대상",
+            body="삭제할 본문",
+            status="draft",
+        )
+        other_user = models.User(
+            google_sub="google-sub-other",
+            email="other@example.com",
+            name="Other",
+        )
+        db.add_all([own_history, other_user])
+        db.flush()
+        other_history = models.HistoryItem(
+            user_id=other_user.id,
+            brief="타 사용자",
+            subject="타 사용자",
+            body="남아야 할 본문",
+            status="draft",
+        )
+        db.add(other_history)
+        db.commit()
+        own_history_id = own_history.id
+        other_history_id = other_history.id
+
+    deleted = client.delete(f"/history/{own_history_id}")
+    missing = client.delete(f"/history/{own_history_id}")
+    forbidden_by_ownership = client.delete(f"/history/{other_history_id}")
+
+    assert deleted.status_code == 204
+    assert missing.status_code == 404
+    assert forbidden_by_ownership.status_code == 404
+    assert client.get("/history").json() == []
+    with SessionLocal() as db:
+        assert db.get(models.HistoryItem, other_history_id) is not None
+
+
 def test_history_draft_update_and_reset():
     client, user = authed_client()
     with SessionLocal() as db:

@@ -113,6 +113,7 @@ Google OAuth `contacts.readonly`, People, Compose
 ### 기능 상세 동작
 - Format 화면은 `GET /format`으로 현재 형식을 조회한다.
 - 편집 모드에서 필드를 수정하고 저장하면 `PUT /format`을 호출한다.
+- 백엔드는 인사말, 본문 구조, 기본 언어가 공백이면 422를 반환해 빈 필수 형식 저장을 막는다.
 - 백엔드는 사용자별 1:1 MailFormat을 생성 또는 갱신한다.
 - AI 생성 시 백엔드가 MailFormat을 시스템 프롬프트에 삽입한다.
 

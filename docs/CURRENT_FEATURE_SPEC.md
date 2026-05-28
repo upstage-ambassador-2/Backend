@@ -273,6 +273,25 @@ Compose, Gmail send, Persona, ReplyContext, mock API
 ### 연계 기능
 Frontend routes, mock data, manual QA
 
+## 11. 운영 Health/Readiness
+
+### 기능 명
+API liveness 및 DB readiness 확인
+
+### 기능 정의
+Railway와 로컬 운영 환경에서 API 프로세스 상태와 DB 연결 가능 여부를 분리해서 확인한다.
+
+### 기능 상세 동작
+- `GET /health`는 API 프로세스가 요청을 받을 수 있으면 `{"status":"ok"}`를 반환한다.
+- `GET /health/ready`는 DB 세션으로 `SELECT 1`을 실행해 데이터베이스 연결을 검증한다.
+- DB 연결 또는 쿼리 실패 시 `GET /health/ready`는 503과 `"Database is not ready."` detail을 반환한다.
+
+### 기능 효과
+배포 환경에서 프로세스 기동과 DB 준비 상태를 구분해 장애 원인을 빠르게 확인할 수 있다.
+
+### 연계 기능
+Railway deployment, Postgres, Docker startup, 운영 smoke test
+
 ## Deferred Items
 
 다음 항목은 현재 안정화/고도화 범위에서 제외한다.

@@ -101,6 +101,7 @@ For Railway with separate web/API domains, set `SESSION_COOKIE_SECURE=true`, `SE
 - `GET /gmail/messages?limit=30&pageToken=<opaque-token>`, `GET /gmail/messages/{id}`
 - `POST /gmail/send`
 - `GET /integrations`, `POST /integrations/{provider}/toggle`
+- `GET /health` for process liveness, `GET /health/ready` for DB readiness
 
 `POST /ai/generate` accepts `tone` and `length` as 1-5 scale integers. During the frontend transition, legacy 0-100 slider values are normalized to the same 5-step scale. Persona `tone` accepts one of `매우 격식`, `격식`, `중립`, `친근`, `매우 친근`.
 

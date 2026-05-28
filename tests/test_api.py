@@ -34,6 +34,37 @@ def teardown_module():
     Path("test-mello.db").unlink(missing_ok=True)
 
 
+def test_health_and_readiness_endpoints():
+    client = TestClient(app)
+
+    health = client.get("/health")
+    readiness = client.get("/health/ready")
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert readiness.status_code == 200
+    assert readiness.json() == {"status": "ok", "database": "ok"}
+
+
+def test_readiness_returns_503_when_database_unavailable(monkeypatch):
+    class BrokenSession:
+        def __enter__(self):
+            from sqlalchemy.exc import OperationalError
+
+            raise OperationalError("SELECT 1", {}, RuntimeError("db down"))
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr("app.main.SessionLocal", lambda: BrokenSession())
+    client = TestClient(app)
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Database is not ready."
+
+
 def authed_client() -> tuple[TestClient, models.User]:
     token = "test-session-token"
     settings = get_settings()

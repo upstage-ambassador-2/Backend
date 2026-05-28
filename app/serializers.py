@@ -133,16 +133,24 @@ def history_out(history: models.HistoryItem) -> HistoryOut:
     persona = history.persona
     reply_context = history.reply_context
     reply_context_payload = reply_context_out(reply_context, persona) if reply_context else None
-    counterparty_email = persona.email if persona else normalize_email(reply_context.from_addr if reply_context else None)
-    counterparty_name = persona.name if persona else display_name_from_address(reply_context.from_addr if reply_context else None)
+    persona_name = persona.name if persona else history.persona_name
+    persona_email = persona.email if persona else history.persona_email
+    reply_email = normalize_email(reply_context.from_addr if reply_context else None)
+    reply_name = display_name_from_address(reply_context.from_addr if reply_context else None)
+    if persona:
+        counterparty_email = persona.email or history.counterparty_email or reply_email
+        counterparty_name = persona.name
+    else:
+        counterparty_email = history.counterparty_email or persona_email or reply_email
+        counterparty_name = history.counterparty_name or persona_name or reply_name
     return HistoryOut(
         id=history.id,
         personaId=history.persona_id,
         replyContextId=history.reply_context_id,
         persona=persona_out(persona) if persona else None,
         replyContext=reply_context_payload,
-        personaName=persona.name if persona else None,
-        personaEmail=persona.email if persona else None,
+        personaName=persona_name,
+        personaEmail=persona_email,
         counterpartyName=counterparty_name,
         counterpartyEmail=counterparty_email,
         brief=history.brief,

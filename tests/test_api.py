@@ -34,6 +34,37 @@ def teardown_module():
     Path("test-mello.db").unlink(missing_ok=True)
 
 
+def test_health_and_readiness_endpoints():
+    client = TestClient(app)
+
+    health = client.get("/health")
+    readiness = client.get("/health/ready")
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert readiness.status_code == 200
+    assert readiness.json() == {"status": "ok", "database": "ok"}
+
+
+def test_readiness_returns_503_when_database_unavailable(monkeypatch):
+    class BrokenSession:
+        def __enter__(self):
+            from sqlalchemy.exc import OperationalError
+
+            raise OperationalError("SELECT 1", {}, RuntimeError("db down"))
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr("app.main.SessionLocal", lambda: BrokenSession())
+    client = TestClient(app)
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Database is not ready."
+
+
 def authed_client() -> tuple[TestClient, models.User]:
     token = "test-session-token"
     settings = get_settings()
@@ -217,7 +248,7 @@ def test_persona_crud():
     assert client.get("/personas").json() == []
 
 
-def test_persona_delete_rejects_history_linked_persona():
+def test_persona_delete_preserves_history_counterparty_snapshot():
     client, user = authed_client()
     with SessionLocal() as db:
         persona = models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com")
@@ -237,9 +268,17 @@ def test_persona_delete_rejects_history_linked_persona():
 
     deleted = client.delete(f"/personas/{persona_id}")
 
-    assert deleted.status_code == 409
-    assert deleted.json()["detail"] == "히스토리와 연결된 페르소나는 삭제할 수 없습니다."
-    assert client.get("/history").json()[0]["personaId"] == persona_id
+    assert deleted.status_code == 204
+    assert client.get("/personas").json() == []
+    item = client.get("/history").json()[0]
+    assert item["personaId"] is None
+    assert item["persona"] is None
+    assert item["personaName"] == "김지훈 팀장"
+    assert item["personaEmail"] == "lead@example.com"
+    assert item["counterpartyName"] == "김지훈 팀장"
+    assert item["counterpartyEmail"] == "lead@example.com"
+    filtered = client.get("/history", params={"personaEmail": "lead@example.com"}).json()
+    assert [entry["id"] for entry in filtered] == [item["id"]]
 
 
 def test_import_contacts_skips_duplicate_email_and_name(monkeypatch):
@@ -310,6 +349,72 @@ def test_import_contacts_permission_error_mentions_contacts(monkeypatch):
     assert response.json()["detail"] == "Google Contacts 권한이 부족합니다. Google 권한을 다시 동의해주세요."
 
 
+def test_structure_persona_text_returns_schema(monkeypatch):
+    from app.schemas import PersonaStructureOut
+
+    async def fake_structure(_settings, text):
+        assert "결론 먼저" in text
+        return PersonaStructureOut(
+            tone="격식",
+            keywords=["결론 먼저", "일정 중시"],
+            avoid=["모호한 표현"],
+            prefer="결론 → 일정 → 근거",
+            notes="결론과 일정을 먼저 보는 업무형 수신자입니다.",
+        )
+
+    monkeypatch.setattr("app.routers.personas.structure_persona_text", fake_structure)
+    client, _ = authed_client()
+
+    response = client.post(
+        "/personas/structure",
+        json={"text": "결론 먼저, 일정 중시. 모호한 표현 싫어함."},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "tone": "격식",
+        "keywords": ["결론 먼저", "일정 중시"],
+        "avoid": ["모호한 표현"],
+        "prefer": "결론 → 일정 → 근거",
+        "notes": "결론과 일정을 먼저 보는 업무형 수신자입니다.",
+    }
+
+
+def test_structure_persona_text_requires_content(monkeypatch):
+    async def fake_structure(*_args, **_kwargs):
+        raise AssertionError("empty persona text should not call Solar")
+
+    monkeypatch.setattr("app.routers.personas.structure_persona_text", fake_structure)
+    client, _ = authed_client()
+
+    response = client.post("/personas/structure", json={"text": "   "})
+
+    assert response.status_code == 422
+
+
+def test_parse_persona_structure_normalizes_model_output():
+    from app.services.solar import parse_persona_structure
+
+    result = parse_persona_structure(
+        """
+        ```json
+        {
+          "tone": "정중하고 공식적",
+          "keywords": ["결론 먼저", "결론 먼저", "일정 중시", "근거 확인"],
+          "avoid": "모호한 표현, 변명조 표현",
+          "prefer": "결론 → 일정 → 근거",
+          "notes": "업무 메일에서는 빠른 결론과 근거를 선호합니다."
+        }
+        ```
+        """
+    )
+
+    assert result.tone == "격식"
+    assert result.keywords == ["결론 먼저", "일정 중시", "근거 확인"]
+    assert result.avoid == ["모호한 표현", "변명조 표현"]
+    assert result.prefer == "결론 → 일정 → 근거"
+
+
 def test_history_endpoint_returns_frontend_compatible_shape():
     client, user = authed_client()
     with SessionLocal() as db:
@@ -335,6 +440,47 @@ def test_history_endpoint_returns_frontend_compatible_shape():
     assert item["toneValue"] == 2
     assert item["length"] == "길게"
     assert item["lengthValue"] == 4
+
+
+def test_history_delete_removes_owned_history_only():
+    client, user = authed_client()
+    with SessionLocal() as db:
+        own_history = models.HistoryItem(
+            user_id=user.id,
+            brief="삭제 대상",
+            subject="삭제 대상",
+            body="삭제할 본문",
+            status="draft",
+        )
+        other_user = models.User(
+            google_sub="google-sub-other",
+            email="other@example.com",
+            name="Other",
+        )
+        db.add_all([own_history, other_user])
+        db.flush()
+        other_history = models.HistoryItem(
+            user_id=other_user.id,
+            brief="타 사용자",
+            subject="타 사용자",
+            body="남아야 할 본문",
+            status="draft",
+        )
+        db.add(other_history)
+        db.commit()
+        own_history_id = own_history.id
+        other_history_id = other_history.id
+
+    deleted = client.delete(f"/history/{own_history_id}")
+    missing = client.delete(f"/history/{own_history_id}")
+    forbidden_by_ownership = client.delete(f"/history/{other_history_id}")
+
+    assert deleted.status_code == 204
+    assert missing.status_code == 404
+    assert forbidden_by_ownership.status_code == 404
+    assert client.get("/history").json() == []
+    with SessionLocal() as db:
+        assert db.get(models.HistoryItem, other_history_id) is not None
 
 
 def test_history_draft_update_and_reset():
@@ -416,7 +562,7 @@ def test_generate_stream_persists_history(monkeypatch):
     history = client.get("/history").json()
     assert len(history) == 1
     assert history[0]["subject"] == "테스트 제목"
-    assert history[0]["body"] == "테스트 본문입니다."
+    assert history[0]["body"] == "테스트 본문입니다.\n\nTester\nuser@example.com"
     assert history[0]["tone"] == "중립"
     assert history[0]["toneValue"] == 3
     assert history[0]["length"] == "보통"
@@ -457,6 +603,35 @@ def test_generate_rejects_empty_generated_result(monkeypatch):
     assert response.status_code == 200
     assert "event: error" in response.text
     assert "Solar 생성 결과가 비어 있습니다. 다시 시도해주세요." in response.text
+    assert client.get("/history").json() == []
+
+
+def test_generate_rejects_forbidden_persona_terms(monkeypatch):
+    async def fake_stream(_settings, _messages):
+        yield "Subject: 일정 공유\n"
+        yield "Body:\n모호한 표현으로 답변드립니다."
+
+    monkeypatch.setattr("app.routers.ai.stream_solar_text", fake_stream)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(
+            user_id=user.id,
+            name="김지훈 팀장",
+            email="lead@example.com",
+            avoid="모호한 표현",
+        )
+        db.add(persona)
+        db.commit()
+        persona_id = persona.id
+
+    response = client.post(
+        "/ai/generate",
+        json={"brief": "일정 공유", "tone": 3, "length": 3, "personaId": persona_id},
+    )
+
+    assert response.status_code == 200
+    assert "event: error" in response.text
+    assert "생성 결과에 피해야 할 표현이 포함되었습니다: 모호한 표현. 다시 생성해주세요." in response.text
     assert client.get("/history").json() == []
 
 
@@ -541,7 +716,7 @@ def test_gmail_send_uses_history_persona_email_and_updates_history(monkeypatch):
 def test_gmail_send_persists_latest_payload_to_history(monkeypatch):
     async def fake_send_gmail_message(_db, _settings, _user, *, to, subject, body, cc, bcc, reply_context):
         assert subject == "수정된 제목"
-        assert body == "수정된 본문"
+        assert body == "수정된 본문\n\nTester\nuser@example.com"
         return {"id": "gmail-edited-1", "threadId": "thread-edited-1"}
 
     monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
@@ -570,8 +745,45 @@ def test_gmail_send_persists_latest_payload_to_history(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["history"]["subject"] == "수정된 제목"
-    assert payload["history"]["body"] == "수정된 본문"
-    assert client.get(f"/history/{history_id}").json()["body"] == "수정된 본문"
+    assert payload["history"]["body"] == "수정된 본문\n\nTester\nuser@example.com"
+    assert client.get(f"/history/{history_id}").json()["body"] == "수정된 본문\n\nTester\nuser@example.com"
+
+
+def test_gmail_send_rejects_forbidden_persona_terms(monkeypatch):
+    async def fake_send_gmail_message(*_args, **_kwargs):
+        raise AssertionError("Forbidden draft should not be sent")
+
+    monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(
+            user_id=user.id,
+            name="김지훈 팀장",
+            email="lead@example.com",
+            avoid="모호한 표현",
+        )
+        db.add(persona)
+        db.flush()
+        history = models.HistoryItem(
+            user_id=user.id,
+            persona_id=persona.id,
+            brief="발송 전 검증",
+            subject="기존 제목",
+            body="기존 본문",
+            status="draft",
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    response = client.post(
+        "/gmail/send",
+        json={"historyId": history_id, "subject": "일정 공유", "body": "모호한 표현으로 답변드립니다."},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "발송하려는 내용에 피해야 할 표현이 포함되었습니다: 모호한 표현. 수정 후 다시 보내주세요."
+    assert client.get(f"/history/{history_id}").json()["status"] == "draft"
 
 
 def test_gmail_send_does_not_resend_already_sent_history(monkeypatch):

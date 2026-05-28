@@ -57,7 +57,7 @@ Google OAuth, Settings, Gmail, Contacts
 ## 3. People/Persona 관리
 
 ### 기능 명
-페르소나 수동 CRUD
+페르소나 수동 CRUD 및 메모 구조화
 
 ### 기능 정의
 자주 메일을 보내는 사람의 이름, 이메일, 관계, 톤, 키워드, 금지 표현, 선호 표현, 메모를 저장한다.
@@ -65,6 +65,8 @@ Google OAuth, Settings, Gmail, Contacts
 ### 기능 상세 동작
 - People 화면은 `GET /personas` 결과를 목록으로 렌더링한다.
 - 사람 추가 또는 수정 시 이름, 이메일, 관계, 역할, 톤, 키워드, 금지 표현, 선호 표현, 메모를 입력한다.
+- 메모 입력 후 `AI 정리`를 누르면 `POST /personas/structure`가 자유 텍스트를 톤, 키워드, 금지 표현, 선호 표현, 요약 메모로 구조화한다.
+- 구조화 결과는 저장 전 폼 필드에 반영되며, 사용자가 다시 수정한 뒤 저장한다.
 - 저장 시 `POST /personas` 또는 `PATCH /personas/{id}`를 호출한다.
 - 삭제 시 확인 후 `DELETE /personas/{id}`를 호출한다.
 - 백엔드는 사용자별 persona를 저장한다.
@@ -132,8 +134,11 @@ Solar 기반 SSE 메일 초안 생성
 - Compose 화면에서 brief를 입력하거나 reply context가 있는 상태에서 `Mello에게 작성 요청`을 누른다.
 - 프론트엔드는 `POST /ai/generate`를 호출하고 SSE stream을 읽는다.
 - 백엔드는 persona, reply context, mail format을 조회하고 Solar 프롬프트를 구성한다.
+- Solar 프롬프트에는 persona의 피해야 할 표현을 그대로 쓰지 말 것과, 서명이 있으면 본문 끝에 포함할 것을 명시한다.
 - 생성 중 `delta` event로 텍스트 청크를 보낸다.
 - 완료 시 `done` event로 `subject`, `body`, `history`를 반환한다.
+- 백엔드는 완료 직후 최종 draft를 검증해 mail format signature가 빠져 있으면 저장 전 본문 끝에 보강한다.
+- 백엔드는 완료 직후 최종 draft의 subject/body에 persona 금지 표현이 포함되면 `error` event를 반환하고 history를 생성하지 않는다.
 - 생성 완료 후 history는 `draft` 상태로 저장된다.
 - `다시 생성`은 같은 입력으로 생성 API를 재호출한다.
 - 새 stream의 첫 `delta`가 오면 이전 표시 결과를 새 결과로 교체한다.
@@ -181,6 +186,8 @@ Gmail API 직접 발송
 - UI의 새 메일 발송은 persona email을 수신자로 사용한다.
 - API는 `to`를 직접 받을 수 있고, 없으면 history persona 또는 reply context에서 수신자를 보완한다.
 - 답장인 경우 reply context의 thread metadata를 사용한다.
+- 백엔드는 발송 직전 subject/body에 persona 금지 표현이 포함되어 있으면 422를 반환하고 Gmail API를 호출하지 않는다.
+- 백엔드는 발송 직전 mail format signature가 body에 없으면 Gmail API 호출과 history 갱신에 사용할 최종 body에 서명을 보강한다.
 - 백엔드는 Gmail API send를 호출한다.
 - 성공 시 history 상태를 `sent`로 갱신하고 Gmail message id와 sent_at을 저장한다.
 - 실패 시 프론트엔드 toast로 에러를 표시한다.
@@ -201,8 +208,8 @@ AI가 생성한 초안과 Gmail 발송 상태를 사용자별로 저장하고, H
 
 ### 기능 상세 동작
 - `/ai/generate` 완료 시 HistoryItem을 `draft` 상태로 생성한다.
-- Compose 작성 결과 body는 생성 완료 후 사용자가 직접 수정할 수 있다.
-- history와 연결된 draft body 수정은 500ms debounce 후 `PATCH /history/{id}/draft`로 저장된다.
+- Compose 작성 결과 subject/body는 생성 완료 후 사용자가 직접 수정할 수 있다.
+- history와 연결된 draft subject/body 수정은 500ms debounce 후 `PATCH /history/{id}/draft`로 저장된다.
 - AI 스트리밍 중에는 작성 결과 편집과 초기화를 잠가 수동 입력과 생성 결과 충돌을 막는다.
 - 작성 결과의 비우기 동작은 `POST /history/{id}/draft/reset`으로 subject/body를 공백으로 초기화한다.
 - `sent` 상태의 history는 draft 수정/초기화를 허용하지 않는다.
@@ -217,9 +224,12 @@ AI가 생성한 초안과 Gmail 발송 상태를 사용자별로 저장하고, H
 - 상세 조회 성공 시 API 응답의 subject, body, 대상 정보를 detail panel에 표시한다.
 - 같은 row를 다시 열 때는 row id 기준으로 캐시된 상세 데이터를 재사용한다.
 - 상세 조회 실패 시 detail panel 안에 실패 문구를 표시하고 목록 화면은 유지한다.
+- detail panel의 삭제 버튼은 확인 후 `DELETE /history/{id}`를 호출하고, 성공 시 앱 shell의 history 목록에서 항목을 제거한다.
 - 닫기 버튼 또는 열린 row 재클릭으로 detail panel을 닫는다.
 - 필터/검색 변경으로 열린 row가 목록에서 사라지면 detail panel을 닫는다.
-- persona가 삭제되었거나 목록 응답에 persona 관계가 없더라도 `personaName`, `personaEmail`, `counterpartyName`, `counterpartyEmail`, `replyFromAddr` fallback으로 대상 정보를 표시한다.
+- History 생성/발송 시점에 persona와 counterparty 이름/이메일 스냅샷을 저장한다.
+- persona 삭제 시 연결된 history의 `persona_id`는 해제하되 저장된 `personaName`, `personaEmail`, `counterpartyName`, `counterpartyEmail` fallback으로 대상 정보를 계속 표시한다.
+- `GET /history?personaEmail=` 필터는 현재 persona 이메일뿐 아니라 저장된 persona/counterparty 스냅샷 이메일도 매칭한다.
 
 ### 기능 효과
 사용자는 생성 및 발송 기록을 추적하고, 목록 preview만으로 부족한 경우 전체 subject/body를 즉시 확인할 수 있다.
@@ -229,18 +239,19 @@ Compose, Gmail send, Persona, ReplyContext, mock API
 
 ### 검증 기준
 - 앱 shell 서버 초기 데이터 로딩에서 받은 `GET /history` 목록이 History 화면에 사용자별로 표시된다.
-- Compose 생성 완료 후 작성 결과 body를 수정하면 history draft 저장 API가 호출된다.
+- Compose 생성 완료 후 작성 결과 subject/body를 수정하면 history draft 저장 API가 호출된다.
 - 비우기 동작은 history draft subject/body를 공백으로 초기화한다.
 - 발송 완료 history는 수정/초기화되지 않는다.
 - Gmail 발송 직전의 최신 subject/body가 history에 남는다.
 - History row 클릭 시 `GET /history/{id}`가 호출된다.
+- History detail panel에서 삭제를 확인하면 `DELETE /history/{id}`가 호출되고 목록 count가 갱신된다.
 - 상세 panel은 전체 subject/body와 대상 정보를 표시한다.
 - 상세 조회 실패가 전체 History 화면을 깨뜨리지 않는다.
 - 필터, 검색, 삭제된 persona fallback이 기존 History 탐색 흐름을 유지한다.
 
 ### 후순위/제외 범위
 - 서버 검색 파라미터 기반 `/history?q=` 구현은 현재 범위에서 제외하고 클라이언트 필터로 유지한다.
-- History 삭제, 페이지네이션, 대량 데이터 최적화는 후순위로 둔다.
+- History 페이지네이션과 대량 데이터 최적화는 후순위로 둔다.
 
 ## 10. Local Mock E2E 지원
 
@@ -263,6 +274,25 @@ Compose, Gmail send, Persona, ReplyContext, mock API
 
 ### 연계 기능
 Frontend routes, mock data, manual QA
+
+## 11. 운영 Health/Readiness
+
+### 기능 명
+API liveness 및 DB readiness 확인
+
+### 기능 정의
+Railway와 로컬 운영 환경에서 API 프로세스 상태와 DB 연결 가능 여부를 분리해서 확인한다.
+
+### 기능 상세 동작
+- `GET /health`는 API 프로세스가 요청을 받을 수 있으면 `{"status":"ok"}`를 반환한다.
+- `GET /health/ready`는 DB 세션으로 `SELECT 1`을 실행해 데이터베이스 연결을 검증한다.
+- DB 연결 또는 쿼리 실패 시 `GET /health/ready`는 503과 `"Database is not ready."` detail을 반환한다.
+
+### 기능 효과
+배포 환경에서 프로세스 기동과 DB 준비 상태를 구분해 장애 원인을 빠르게 확인할 수 있다.
+
+### 연계 기능
+Railway deployment, Postgres, Docker startup, 운영 smoke test
 
 ## Deferred Items
 

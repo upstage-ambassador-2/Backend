@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -10,6 +10,16 @@ from app.services.people import normalize_email
 
 
 router = APIRouter(prefix="/history", tags=["history"])
+
+
+def _history_matches_email(item: models.HistoryItem, email: str) -> bool:
+    candidates = [
+        item.persona.email if item.persona else None,
+        item.persona_email,
+        item.counterparty_email,
+        item.reply_context.from_addr if item.reply_context else None,
+    ]
+    return any(normalize_email(candidate) == email for candidate in candidates)
 
 
 @router.get("", response_model=list[HistoryOut])
@@ -36,12 +46,7 @@ def list_history(
     items = db.scalars(stmt).all()
     email_value = normalize_email(persona_email or email)
     if email_value:
-        items = [
-            item
-            for item in items
-            if normalize_email(item.persona.email if item.persona else None) == email_value
-            or normalize_email(item.reply_context.from_addr if item.reply_context else None) == email_value
-        ]
+        items = [item for item in items if _history_matches_email(item, email_value)]
     return [history_out(item) for item in items]
 
 
@@ -51,6 +56,16 @@ def get_history(history_id: str, user: CurrentUser, db: DbSession) -> HistoryOut
     if not item or item.user_id != user.id:
         raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
     return history_out(item)
+
+
+@router.delete("/{history_id}", status_code=204)
+def delete_history(history_id: str, user: CurrentUser, db: DbSession) -> Response:
+    item = db.get(models.HistoryItem, history_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
+    db.delete(item)
+    db.commit()
+    return Response(status_code=204)
 
 
 def _editable_history(history_id: str, user: CurrentUser, db: DbSession) -> models.HistoryItem:

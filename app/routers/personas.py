@@ -3,10 +3,19 @@ from sqlalchemy import select
 
 from app import models
 from app.deps import AppSettings, CurrentUser, DbSession
-from app.schemas import ContactImportIn, ContactImportOut, PersonaCreate, PersonaOut, PersonaPatch
+from app.schemas import (
+    ContactImportIn,
+    ContactImportOut,
+    PersonaCreate,
+    PersonaOut,
+    PersonaPatch,
+    PersonaStructureIn,
+    PersonaStructureOut,
+)
 from app.serializers import join_lines, persona_out
 from app.services.google import import_contacts
 from app.services.people import find_persona_by_email, normalize_email
+from app.services.solar import structure_persona_text
 
 
 router = APIRouter(prefix="/personas", tags=["personas"])
@@ -71,16 +80,18 @@ def delete_persona(persona_id: str, user: CurrentUser, db: DbSession) -> None:
     persona = db.get(models.Persona, persona_id)
     if not persona or persona.user_id != user.id:
         raise HTTPException(status_code=404, detail="페르소나를 찾을 수 없습니다.")
-    linked_history_id = db.scalar(
-        select(models.HistoryItem.id)
-        .where(
+    linked_history = db.scalars(
+        select(models.HistoryItem).where(
             models.HistoryItem.user_id == user.id,
             models.HistoryItem.persona_id == persona_id,
         )
-        .limit(1)
-    )
-    if linked_history_id:
-        raise HTTPException(status_code=409, detail="히스토리와 연결된 페르소나는 삭제할 수 없습니다.")
+    ).all()
+    for history in linked_history:
+        history.persona_name = history.persona_name or persona.name
+        history.persona_email = history.persona_email or persona.email
+        history.counterparty_name = history.counterparty_name or persona.name
+        history.counterparty_email = history.counterparty_email or persona.email
+        history.persona_id = None
     db.delete(persona)
     db.commit()
 
@@ -97,3 +108,16 @@ async def import_google_contacts(
         select(models.Persona).where(models.Persona.user_id == user.id).order_by(models.Persona.created_at.desc())
     ).all()
     return ContactImportOut(imported=len(imported), skipped=skipped, personas=[persona_out(item) for item in personas])
+
+
+@router.post("/structure", response_model=PersonaStructureOut)
+async def structure_persona(
+    payload: PersonaStructureIn,
+    user: CurrentUser,
+    settings: AppSettings,
+) -> PersonaStructureOut:
+    del user
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="분석할 페르소나 메모가 필요합니다.")
+    return await structure_persona_text(settings, text)

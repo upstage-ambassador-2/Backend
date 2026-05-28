@@ -11,7 +11,12 @@ from app.schemas import GenerateIn, ReplyContextInline
 from app.serializers import history_out
 from app.services.google import upsert_reply_context
 from app.services.people import assign_persona_email_if_empty, find_persona_by_email
-from app.services.solar import build_generation_messages, parse_generated_draft, stream_solar_text
+from app.services.solar import (
+    apply_generation_guardrails,
+    build_generation_messages,
+    parse_generated_draft,
+    stream_solar_text,
+)
 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -70,6 +75,7 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession, settin
             draft = parse_generated_draft("".join(raw_parts))
             if not draft.subject.strip() or not draft.body.strip():
                 raise HTTPException(status_code=502, detail="Solar 생성 결과가 비어 있습니다. 다시 시도해주세요.")
+            draft = apply_generation_guardrails(draft, persona=persona, mail_format=mail_format)
             with SessionLocal() as session:
                 history = models.HistoryItem(
                     user_id=user_id,

@@ -227,7 +227,8 @@ AI가 생성한 초안과 Gmail 발송 상태를 사용자별로 저장하고, H
 - detail panel의 삭제 버튼은 확인 후 `DELETE /history/{id}`를 호출하고, 성공 시 앱 shell의 history 목록에서 항목을 제거한다.
 - 닫기 버튼 또는 열린 row 재클릭으로 detail panel을 닫는다.
 - 필터/검색 변경으로 열린 row가 목록에서 사라지면 detail panel을 닫는다.
-- persona가 삭제되었거나 목록 응답에 persona 관계가 없더라도 `personaName`, `personaEmail`, `counterpartyName`, `counterpartyEmail`, `replyFromAddr` fallback으로 대상 정보를 표시한다.
+- History 생성/발송 시점에 persona와 counterparty 이름/이메일 스냅샷을 저장한다.
+- persona 삭제 시 연결된 history의 `persona_id`는 해제하되 저장된 `personaName`, `personaEmail`, `counterpartyName`, `counterpartyEmail` fallback으로 대상 정보를 계속 표시한다.
 
 ### 기능 효과
 사용자는 생성 및 발송 기록을 추적하고, 목록 preview만으로 부족한 경우 전체 subject/body를 즉시 확인할 수 있다.

@@ -217,6 +217,22 @@ def test_me_and_format_roundtrip():
     assert fetched.json()["signature"] == "Tester"
 
 
+def test_format_update_rejects_blank_required_fields():
+    client, _ = authed_client()
+
+    blank_greeting = client.put("/format", json={"greeting": "   "})
+    assert blank_greeting.status_code == 422
+    assert blank_greeting.json()["detail"] == "인사말은 비워둘 수 없습니다."
+
+    blank_structure = client.put("/format", json={"structure": ""})
+    assert blank_structure.status_code == 422
+    assert blank_structure.json()["detail"] == "본문 구조는 비워둘 수 없습니다."
+
+    blank_language = client.put("/format", json={"language": "\n\t"})
+    assert blank_language.status_code == 422
+    assert blank_language.json()["detail"] == "기본 언어는 비워둘 수 없습니다."
+
+
 def test_me_reports_integration_status_from_google_scopes():
     client, user = authed_client()
 

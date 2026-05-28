@@ -165,6 +165,7 @@ Gmail에서 최근 받은 메일을 조회하고, 선택한 메일의 원문과 
 - 메일 항목 클릭 시 `/compose/{personaId}/reply/{messageId}` 또는 `/compose/reply/{messageId}`로 이동한다.
 - 상세 route는 server side에서 `GET /gmail/messages/{messageId}`를 호출한다.
 - 상세 응답의 raw body와 reply context를 Compose에 주입한다.
+- Gmail 원문이 `text/html`만 제공될 경우 백엔드는 태그, script/style 노이즈를 제거한 plain text로 reply context를 저장한다.
 - sender email이 기존 persona와 매칭되면 해당 persona를 사용한다.
 - 매칭 persona가 없고 본인 이메일이 아니면 클라이언트가 신규 persona 생성을 보조하고 생성된 persona의 reply route로 이동한다.
 

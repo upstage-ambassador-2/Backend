@@ -1268,3 +1268,20 @@ def test_gmail_messages_validates_limit_bounds():
 
     assert too_small.status_code == 422
     assert too_large.status_code == 422
+
+
+def test_gmail_html_body_is_normalized_to_plain_text():
+    html_body = (
+        "<html><body><p>안녕하세요.<br>자료 확인 부탁드립니다.</p>"
+        "<script>alert('x')</script><style>body{display:none}</style>"
+        "<p>감사합니다.</p></body></html>"
+    )
+    encoded = base64.urlsafe_b64encode(html_body.encode("utf-8")).decode("utf-8").rstrip("=")
+    payload = {
+        "mimeType": "text/html",
+        "body": {"data": encoded},
+    }
+
+    assert google_service._plain_text_from_payload(payload) == (
+        "안녕하세요.\n자료 확인 부탁드립니다.\n감사합니다."
+    )

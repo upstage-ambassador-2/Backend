@@ -2,6 +2,7 @@ import asyncio
 import base64
 from datetime import timedelta
 from email.message import EmailMessage
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlencode
 
@@ -259,11 +260,55 @@ def _decode_body(data: str | None) -> str:
     return base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8", errors="replace")
 
 
+class _PlainTextHTMLParser(HTMLParser):
+    block_tags = {"address", "blockquote", "br", "div", "li", "p", "table", "tr"}
+    ignored_tags = {"script", "style"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.ignored_depth = 0
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.ignored_tags:
+            self.ignored_depth += 1
+            return
+        if tag in self.block_tags:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.ignored_tags:
+            self.ignored_depth = max(0, self.ignored_depth - 1)
+            return
+        if tag in self.block_tags:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self.ignored_depth:
+            return
+        text = data.strip()
+        if text:
+            self.parts.append(text)
+
+    def text(self) -> str:
+        lines = [" ".join(line.split()) for line in "".join(self.parts).splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def _html_to_text(value: str) -> str:
+    parser = _PlainTextHTMLParser()
+    parser.feed(value)
+    parser.close()
+    return parser.text()
+
+
 def _plain_text_from_payload(payload: dict[str, Any]) -> str:
     mime_type = payload.get("mimeType")
     body_data = payload.get("body", {}).get("data")
     if mime_type == "text/plain" and body_data:
         return _decode_body(body_data)
+    if mime_type == "text/html" and body_data:
+        return _html_to_text(_decode_body(body_data))
     for part in payload.get("parts", []) or []:
         text = _plain_text_from_payload(part)
         if text:

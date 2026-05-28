@@ -310,6 +310,72 @@ def test_import_contacts_permission_error_mentions_contacts(monkeypatch):
     assert response.json()["detail"] == "Google Contacts 권한이 부족합니다. Google 권한을 다시 동의해주세요."
 
 
+def test_structure_persona_text_returns_schema(monkeypatch):
+    from app.schemas import PersonaStructureOut
+
+    async def fake_structure(_settings, text):
+        assert "결론 먼저" in text
+        return PersonaStructureOut(
+            tone="격식",
+            keywords=["결론 먼저", "일정 중시"],
+            avoid=["모호한 표현"],
+            prefer="결론 → 일정 → 근거",
+            notes="결론과 일정을 먼저 보는 업무형 수신자입니다.",
+        )
+
+    monkeypatch.setattr("app.routers.personas.structure_persona_text", fake_structure)
+    client, _ = authed_client()
+
+    response = client.post(
+        "/personas/structure",
+        json={"text": "결론 먼저, 일정 중시. 모호한 표현 싫어함."},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "tone": "격식",
+        "keywords": ["결론 먼저", "일정 중시"],
+        "avoid": ["모호한 표현"],
+        "prefer": "결론 → 일정 → 근거",
+        "notes": "결론과 일정을 먼저 보는 업무형 수신자입니다.",
+    }
+
+
+def test_structure_persona_text_requires_content(monkeypatch):
+    async def fake_structure(*_args, **_kwargs):
+        raise AssertionError("empty persona text should not call Solar")
+
+    monkeypatch.setattr("app.routers.personas.structure_persona_text", fake_structure)
+    client, _ = authed_client()
+
+    response = client.post("/personas/structure", json={"text": "   "})
+
+    assert response.status_code == 422
+
+
+def test_parse_persona_structure_normalizes_model_output():
+    from app.services.solar import parse_persona_structure
+
+    result = parse_persona_structure(
+        """
+        ```json
+        {
+          "tone": "정중하고 공식적",
+          "keywords": ["결론 먼저", "결론 먼저", "일정 중시", "근거 확인"],
+          "avoid": "모호한 표현, 변명조 표현",
+          "prefer": "결론 → 일정 → 근거",
+          "notes": "업무 메일에서는 빠른 결론과 근거를 선호합니다."
+        }
+        ```
+        """
+    )
+
+    assert result.tone == "격식"
+    assert result.keywords == ["결론 먼저", "일정 중시", "근거 확인"]
+    assert result.avoid == ["모호한 표현", "변명조 표현"]
+    assert result.prefer == "결론 → 일정 → 근거"
+
+
 def test_history_endpoint_returns_frontend_compatible_shape():
     client, user = authed_client()
     with SessionLocal() as db:

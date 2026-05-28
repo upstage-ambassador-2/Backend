@@ -11,8 +11,9 @@ from langgraph.graph import END, START, StateGraph
 
 from app import models
 from app.config import Settings
-from app.generation_options import generation_length_description, generation_tone_description
+from app.generation_options import PERSONA_TONES, generation_length_description, generation_tone_description
 from app.schemas import GeneratedDraft
+from app.schemas import PersonaStructureOut
 
 
 def describe_tone(value: int) -> str:
@@ -206,3 +207,94 @@ def parse_generated_draft(text: str) -> GeneratedDraft:
     first = re.sub(r"^(Subject|제목)\s*:\s*", "", nonempty[0], flags=re.IGNORECASE)
     body = "\n".join(lines[1:]).strip() if len(lines) > 1 else first
     return GeneratedDraft(subject=first[:120], body=body)
+
+
+def _trim_list(value: object, *, limit: int = 6) -> list[str]:
+    if isinstance(value, str):
+        raw_items = re.split(r"[\n,]", value)
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+    items: list[str] = []
+    for item in raw_items:
+        text = str(item).strip()
+        if text and text not in items:
+            items.append(text[:40])
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _normalize_persona_tone(value: object) -> str:
+    tone = str(value or "").strip()
+    if tone in PERSONA_TONES:
+        return tone
+    if "매우" in tone and any(keyword in tone for keyword in ("격식", "정중", "공식")):
+        return "매우 격식"
+    if "매우" in tone and any(keyword in tone for keyword in ("친근", "캐주얼", "편한")):
+        return "매우 친근"
+    if any(keyword in tone for keyword in ("격식", "정중", "공손", "예의", "공식")):
+        return "격식"
+    if any(keyword in tone for keyword in ("친근", "따뜻", "편한", "캐주얼", "친구", "가족")):
+        return "친근"
+    return "중립"
+
+
+def parse_persona_structure(text: str) -> PersonaStructureOut:
+    cleaned = text.strip()
+    json_text = cleaned
+    fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, flags=re.DOTALL)
+    if fence:
+        json_text = fence.group(1).strip()
+    try:
+        payload = json.loads(json_text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="페르소나 분석 결과를 해석하지 못했습니다.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="페르소나 분석 결과를 해석하지 못했습니다.")
+
+    return PersonaStructureOut(
+        tone=_normalize_persona_tone(payload.get("tone")),
+        keywords=_trim_list(payload.get("keywords")),
+        avoid=_trim_list(payload.get("avoid")),
+        prefer=str(payload.get("prefer") or "").strip()[:500],
+        notes=str(payload.get("notes") or "").strip()[:1000],
+    )
+
+
+async def structure_persona_text(settings: Settings, text: str) -> PersonaStructureOut:
+    if not settings.solar_api_key:
+        raise HTTPException(status_code=503, detail="SOLAR_API_KEY가 설정되지 않았습니다.")
+    model = ChatOpenAI(
+        model=settings.solar_model,
+        api_key=settings.solar_api_key,
+        base_url=settings.solar_base_url.rstrip("/"),
+        timeout=settings.solar_timeout_seconds,
+        temperature=0.2,
+    )
+    messages = [
+        SystemMessage(
+            content=(
+                "너는 메일 수신자 페르소나 메모를 구조화하는 도우미다. "
+                "반드시 JSON만 출력한다. "
+                "스키마: {\"tone\":\"매우 격식|격식|중립|친근|매우 친근\","
+                "\"keywords\":[\"키워드\"],\"avoid\":[\"피해야 할 표현\"],"
+                "\"prefer\":\"선호하는 메일 구조\",\"notes\":\"요약 메모\"}. "
+                "값이 불명확하면 tone은 중립, 배열은 빈 배열로 둔다."
+            )
+        ),
+        HumanMessage(content=f"수신자 메모:\n{text[:4000]}"),
+    ]
+    try:
+        response = await model.ainvoke(messages)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        message = str(exc)
+        if "rate" in message.lower() or "429" in message:
+            raise HTTPException(status_code=429, detail="Solar 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.") from exc
+        if "timeout" in message.lower():
+            raise HTTPException(status_code=504, detail="Solar 응답 시간이 초과되었습니다.") from exc
+        raise HTTPException(status_code=502, detail="페르소나 분석 요청에 실패했습니다.") from exc
+    return parse_persona_structure(_chunk_text(response.content))

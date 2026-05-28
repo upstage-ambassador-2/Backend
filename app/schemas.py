@@ -93,6 +93,18 @@ class ContactImportOut(BaseModel):
     personas: list[PersonaOut]
 
 
+class PersonaStructureIn(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class PersonaStructureOut(BaseModel):
+    tone: PersonaTone = "중립"
+    keywords: list[str] = []
+    avoid: list[str] = []
+    prefer: str = ""
+    notes: str = ""
+
+
 class MailFormatIn(BaseModel):
     signature: str | None = None
     greeting: str | None = None

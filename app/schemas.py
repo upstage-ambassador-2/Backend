@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -7,6 +7,36 @@ from app.generation_options import GENERATION_LENGTH_LABELS, GENERATION_TONE_LAB
 
 
 PersonaTone = Literal["매우 격식", "격식", "중립", "친근", "매우 친근"]
+MbtiType = Literal[
+    "ISTJ",
+    "ISFJ",
+    "INFJ",
+    "INTJ",
+    "ISTP",
+    "ISFP",
+    "INFP",
+    "INTP",
+    "ESTP",
+    "ESFP",
+    "ENFP",
+    "ENTP",
+    "ESTJ",
+    "ESFJ",
+    "ENFJ",
+    "ENTJ",
+]
+MBTI_TYPE_VALUES = set(get_args(MbtiType))
+
+
+def normalize_mbti_value(value: object, *, allow_none: bool = False) -> MbtiType | Literal[""] | None:
+    if value is None:
+        return None if allow_none else ""
+    mbti = str(value).strip().upper()
+    if not mbti:
+        return ""
+    if mbti not in MBTI_TYPE_VALUES:
+        raise ValueError("MBTI는 16가지 유형 중 하나여야 합니다.")
+    return cast(MbtiType, mbti)
 
 
 class UserOut(BaseModel):
@@ -44,7 +74,7 @@ class PersonaBase(BaseModel):
     notes: str = ""
     email: EmailStr | None = None
     role: str = ""
-    mbti: str = ""
+    mbti: MbtiType | Literal[""] = ""
     avatar: str = ""
     color: str = "#dfe3da"
     keywords: list[str] = []
@@ -52,6 +82,11 @@ class PersonaBase(BaseModel):
     prefer: str = ""
     channel: str = "이메일"
     tagColor: str = "gray"
+
+    @field_validator("mbti", mode="before")
+    @classmethod
+    def normalize_mbti(cls, value):
+        return normalize_mbti_value(value)
 
 
 class PersonaCreate(PersonaBase):
@@ -65,7 +100,7 @@ class PersonaPatch(BaseModel):
     notes: str | None = None
     email: EmailStr | None = None
     role: str | None = None
-    mbti: str | None = None
+    mbti: MbtiType | Literal[""] | None = None
     avatar: str | None = None
     color: str | None = None
     keywords: list[str] | None = None
@@ -73,6 +108,11 @@ class PersonaPatch(BaseModel):
     prefer: str | None = None
     channel: str | None = None
     tagColor: str | None = None
+
+    @field_validator("mbti", mode="before")
+    @classmethod
+    def normalize_mbti(cls, value):
+        return normalize_mbti_value(value, allow_none=True)
 
 
 class PersonaOut(PersonaBase):
@@ -103,6 +143,17 @@ class PersonaStructureOut(BaseModel):
     avoid: list[str] = []
     prefer: str = ""
     notes: str = ""
+
+
+class PersonaMbtiInferIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class PersonaMbtiInferOut(BaseModel):
+    mbti: MbtiType
+    confidence: Literal["low", "medium", "high"] = "medium"
+    rationale: str = ""
+    sourceUrl: str = "https://www.mbtionline.com/en-US/MBTI-Types/All-about-the-Myers-Briggs-types"
 
 
 class MailFormatIn(BaseModel):

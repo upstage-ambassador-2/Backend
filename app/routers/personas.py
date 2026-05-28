@@ -7,6 +7,8 @@ from app.schemas import (
     ContactImportIn,
     ContactImportOut,
     PersonaCreate,
+    PersonaMbtiInferIn,
+    PersonaMbtiInferOut,
     PersonaOut,
     PersonaPatch,
     PersonaStructureIn,
@@ -15,7 +17,7 @@ from app.schemas import (
 from app.serializers import join_lines, persona_out
 from app.services.google import import_contacts
 from app.services.people import find_persona_by_email, normalize_email
-from app.services.solar import structure_persona_text
+from app.services.solar import infer_persona_mbti, structure_persona_text
 
 
 router = APIRouter(prefix="/personas", tags=["personas"])
@@ -121,3 +123,16 @@ async def structure_persona(
     if not text:
         raise HTTPException(status_code=422, detail="분석할 페르소나 메모가 필요합니다.")
     return await structure_persona_text(settings, text)
+
+
+@router.post("/infer-mbti", response_model=PersonaMbtiInferOut)
+async def infer_mbti(
+    payload: PersonaMbtiInferIn,
+    user: CurrentUser,
+    settings: AppSettings,
+) -> PersonaMbtiInferOut:
+    del user
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="MBTI 분석에 사용할 설명이 필요합니다.")
+    return await infer_persona_mbti(settings, text)

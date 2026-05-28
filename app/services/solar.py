@@ -1,9 +1,13 @@
+import asyncio
 import json
 import re
+import time
 from collections.abc import AsyncIterator
+from typing import Literal, cast
 from typing_extensions import TypedDict
 
 from fastapi import HTTPException
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.config import get_stream_writer
@@ -12,8 +16,40 @@ from langgraph.graph import END, START, StateGraph
 from app import models
 from app.config import Settings
 from app.generation_options import PERSONA_TONES, generation_length_description, generation_tone_description
-from app.schemas import GeneratedDraft
-from app.schemas import PersonaStructureOut
+from app.schemas import GeneratedDraft, MBTI_TYPE_VALUES, MbtiType, PersonaMbtiInferOut, PersonaStructureOut
+
+
+MBTI_TYPES = {
+    "ISTJ",
+    "ISFJ",
+    "INFJ",
+    "INTJ",
+    "ISTP",
+    "ISFP",
+    "INFP",
+    "INTP",
+    "ESTP",
+    "ESFP",
+    "ENFP",
+    "ENTP",
+    "ESTJ",
+    "ESFJ",
+    "ENFJ",
+    "ENTJ",
+}
+MBTI_REFERENCE_SOURCE_URL = "https://www.mbtionline.com/en-US/MBTI-Types/All-about-the-Myers-Briggs-types"
+MBTI_ASSESSMENT_SOURCE_URL = "https://www.themyersbriggs.com/en-US/Explore-Solutions/MBTI"
+MBTI_REFERENCE_FALLBACK = (
+    "Official MBTI reference summary from The Myers-Briggs Company / MBTIonline: "
+    "there are 16 MBTI types, each made from four letters. "
+    "E-I describes how a person gets energy: Extraversion vs Introversion. "
+    "S-N describes how a person takes in information and learns: Sensing vs Intuition. "
+    "T-F describes how a person makes decisions: Thinking vs Feeling. "
+    "J-P describes how a person organizes time and environment: Judging vs Perceiving. "
+    "The MBTI assessment is not a test or quiz; there are no right or wrong answers and no best type. "
+    "Use this only as a best-fit preference estimate from the user's description, not as a diagnosis or hiring signal."
+)
+_mbti_reference_cache: tuple[float, str] | None = None
 
 
 def describe_tone(value: int) -> str:
@@ -38,6 +74,11 @@ def _prompt_safe(value: object) -> str:
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     text = text.replace("\x00", "")
     return text.replace("<", "＜").replace(">", "＞")
+
+
+def _prompt_mbti(value: object) -> str:
+    mbti = str(value or "").strip().upper()
+    return mbti if mbti in MBTI_TYPE_VALUES else "미지정"
 
 
 def _length_composition(value: int) -> str:
@@ -80,6 +121,7 @@ def build_generation_messages(
             f"- 이름: {_prompt_value(persona.name)}",
             f"- 이메일: {_prompt_value(persona.email, '(미등록)')}",
             f"- 관계: {_prompt_value(persona.relation)}",
+            f"- MBTI: {_prompt_mbti(persona.mbti)}",
             f"- 선호 톤: {_prompt_value(persona.tone)}",
             f"- 메모: {_prompt_value(persona.notes)}",
             f"- 키워드: {_prompt_list(persona.keywords)}",
@@ -128,6 +170,7 @@ Body:
 - 마무리 문장이 제공되면 서명 직전에 자연스럽게 사용한다.
 - 불릿 스타일은 항목이 2개 이상일 때만 사용하고, 짧은 길이에서는 문장형을 우선한다.
 - 페르소나의 선호 표현/구조와 키워드를 반영하되 과장하지 않는다.
+- 페르소나 MBTI가 제공되면 성향 참고 정보로만 사용하고, 본문에 MBTI 유형명이나 성격 분석을 직접 언급하지 않는다.
 - 페르소나의 피해야 할 표현은 제목이나 본문에 그대로 사용하지 않는다.
 - 서명이 제공되면 본문 마지막에 정확히 한 번 포함한다.
 - 서명 뒤에는 추가 문장이나 이름을 덧붙이지 않는다.
@@ -204,6 +247,47 @@ def _chunk_text(content: object) -> str:
                     pieces.append(str(text))
         return "".join(pieces)
     return str(content) if content else ""
+
+
+def _compact_html_text(value: str) -> str:
+    text = re.sub(r"<script\b.*?</script>", " ", value, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:2500]
+
+
+async def load_official_mbti_reference() -> str:
+    global _mbti_reference_cache
+    now = time.monotonic()
+    if _mbti_reference_cache and now - _mbti_reference_cache[0] < 60 * 60:
+        return _mbti_reference_cache[1]
+
+    snippets = [MBTI_REFERENCE_FALLBACK]
+    try:
+        async with httpx.AsyncClient(timeout=5, follow_redirects=True) as client:
+            responses = await asyncio.gather(
+                client.get(MBTI_REFERENCE_SOURCE_URL),
+                client.get(MBTI_ASSESSMENT_SOURCE_URL),
+                return_exceptions=True,
+            )
+    except Exception:
+        responses = []
+
+    for response in responses:
+        if isinstance(response, Exception):
+            continue
+        if response.status_code >= 400:
+            continue
+        text = _compact_html_text(response.text)
+        if text:
+            snippets.append(text)
+
+    reference = "\n\n".join(snippets)
+    _mbti_reference_cache = (now, reference)
+    return reference
 
 
 async def _generate_node(state: GenerationGraphState) -> dict[str, str]:
@@ -419,6 +503,34 @@ def parse_persona_structure(text: str) -> PersonaStructureOut:
     )
 
 
+def parse_persona_mbti(text: str) -> PersonaMbtiInferOut:
+    cleaned = text.strip()
+    json_text = cleaned
+    fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, flags=re.DOTALL)
+    if fence:
+        json_text = fence.group(1).strip()
+    try:
+        payload = json.loads(json_text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="MBTI 분석 결과를 해석하지 못했습니다.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="MBTI 분석 결과를 해석하지 못했습니다.")
+
+    mbti = str(payload.get("mbti") or "").strip().upper()
+    if mbti not in MBTI_TYPES:
+        raise HTTPException(status_code=502, detail="MBTI 분석 결과가 올바르지 않습니다.")
+    confidence = str(payload.get("confidence") or "medium").strip().lower()
+    if confidence not in {"low", "medium", "high"}:
+        confidence = "medium"
+    rationale = str(payload.get("rationale") or "").strip()
+    return PersonaMbtiInferOut(
+        mbti=cast(MbtiType, mbti),
+        confidence=cast(Literal["low", "medium", "high"], confidence),
+        rationale=rationale[:220],
+        sourceUrl=MBTI_REFERENCE_SOURCE_URL,
+    )
+
+
 async def structure_persona_text(settings: Settings, text: str) -> PersonaStructureOut:
     if not settings.solar_api_key:
         raise HTTPException(status_code=503, detail="SOLAR_API_KEY가 설정되지 않았습니다.")
@@ -454,3 +566,52 @@ async def structure_persona_text(settings: Settings, text: str) -> PersonaStruct
             raise HTTPException(status_code=504, detail="Solar 응답 시간이 초과되었습니다.") from exc
         raise HTTPException(status_code=502, detail="페르소나 분석 요청에 실패했습니다.") from exc
     return parse_persona_structure(_chunk_text(response.content))
+
+
+async def infer_persona_mbti(settings: Settings, text: str) -> PersonaMbtiInferOut:
+    if not settings.solar_api_key:
+        raise HTTPException(status_code=503, detail="SOLAR_API_KEY가 설정되지 않았습니다.")
+    reference = await load_official_mbti_reference()
+    model = ChatOpenAI(
+        model=settings.solar_model,
+        api_key=settings.solar_api_key,
+        base_url=settings.solar_base_url.rstrip("/"),
+        timeout=settings.solar_timeout_seconds,
+        temperature=0.1,
+    )
+    messages = [
+        SystemMessage(
+            content=(
+                "너는 사용자가 적은 타인의 성향 설명을 MBTI 선호 조합으로 추정하는 도우미다. "
+                "공식 Myers-Briggs/MBTIonline 기준의 네 선호 축(E-I, S-N, T-F, J-P)만 사용한다. "
+                "MBTI는 정답/오답이나 우열이 있는 테스트가 아니므로 진단처럼 단정하지 말고 "
+                "사용자 설명에서 가장 그럴듯한 best-fit 타입 하나를 고른다. "
+                "반드시 JSON만 출력한다. "
+                "스키마: {\"mbti\":\"ISTJ|ISFJ|INFJ|INTJ|ISTP|ISFP|INFP|INTP|ESTP|ESFP|ENFP|ENTP|ESTJ|ESFJ|ENFJ|ENTJ\","
+                "\"confidence\":\"low|medium|high\",\"rationale\":\"한국어 한 문장 근거\"}. "
+                "근거가 부족하면 confidence는 low로 둔다."
+            )
+        ),
+        HumanMessage(
+            content=(
+                "<official_mbti_reference>\n"
+                f"{_prompt_safe(reference)[:6000]}\n"
+                "</official_mbti_reference>\n\n"
+                "<person_description>\n"
+                f"{_prompt_safe(text)[:4000]}\n"
+                "</person_description>"
+            )
+        ),
+    ]
+    try:
+        response = await model.ainvoke(messages)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        message = str(exc)
+        if "rate" in message.lower() or "429" in message:
+            raise HTTPException(status_code=429, detail="Solar 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.") from exc
+        if "timeout" in message.lower():
+            raise HTTPException(status_code=504, detail="Solar 응답 시간이 초과되었습니다.") from exc
+        raise HTTPException(status_code=502, detail="MBTI 분석 요청에 실패했습니다.") from exc
+    return parse_persona_mbti(_chunk_text(response.content))

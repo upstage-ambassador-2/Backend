@@ -186,12 +186,18 @@ async def _google_get_json_with_client(
     *,
     fallback_detail: str = "Google API 요청에 실패했습니다.",
     forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    not_found_detail: str | None = None,
 ) -> dict[str, Any]:
     try:
         response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=fallback_detail) from exc
-    _raise_google_api_error(response, fallback_detail=fallback_detail, forbidden_detail=forbidden_detail)
+    _raise_google_api_error(
+        response,
+        fallback_detail=fallback_detail,
+        forbidden_detail=forbidden_detail,
+        not_found_detail=not_found_detail,
+    )
     return response.json()
 
 
@@ -202,6 +208,7 @@ async def google_get_json(
     *,
     fallback_detail: str = "Google API 요청에 실패했습니다.",
     forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    not_found_detail: str | None = None,
 ) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
         return await _google_get_json_with_client(
@@ -211,6 +218,7 @@ async def google_get_json(
             params,
             fallback_detail=fallback_detail,
             forbidden_detail=forbidden_detail,
+            not_found_detail=not_found_detail,
         )
 
 
@@ -228,7 +236,13 @@ async def google_post_json(url: str, access_token: str, payload: dict[str, Any])
     return response.json()
 
 
-def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str, forbidden_detail: str) -> None:
+def _raise_google_api_error(
+    response: httpx.Response,
+    *,
+    fallback_detail: str,
+    forbidden_detail: str,
+    not_found_detail: str | None = None,
+) -> None:
     if response.status_code == 401:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -244,6 +258,8 @@ def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str, f
             status_code=429,
             detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
         )
+    if response.status_code == 404 and not_found_detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail=fallback_detail)
 
@@ -381,22 +397,29 @@ async def list_gmail_messages(
         messages = (listing.get("messages") or [])[:limit]
         semaphore = asyncio.Semaphore(8)
 
-        async def fetch_metadata(item: dict[str, Any]) -> GmailMessageOut:
+        async def fetch_metadata(item: dict[str, Any]) -> GmailMessageOut | None:
             async with semaphore:
-                detail = await _google_get_json_with_client(
-                    client,
-                    f"{GMAIL_API}/messages/{item['id']}",
-                    access_token,
-                    params={
-                        "format": "metadata",
-                        "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"],
-                    },
-                    fallback_detail="Gmail 메시지 조회에 실패했습니다.",
-                    forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
-                )
+                try:
+                    detail = await _google_get_json_with_client(
+                        client,
+                        f"{GMAIL_API}/messages/{item['id']}",
+                        access_token,
+                        params={
+                            "format": "metadata",
+                            "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"],
+                        },
+                        fallback_detail="Gmail 메시지 조회에 실패했습니다.",
+                        forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+                        not_found_detail="Gmail 메시지를 찾을 수 없습니다.",
+                    )
+                except HTTPException as exc:
+                    if exc.status_code == status.HTTP_404_NOT_FOUND:
+                        return None
+                    raise
                 return gmail_message_out(detail)
 
-        message_items = await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        fetched_items = await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        message_items = [item for item in fetched_items if item is not None]
         visible_items = [item for item in message_items if not _sent_by_current_user(user, item)]
         next_page_token = listing.get("nextPageToken")
         return GmailMessagesPageOut(
@@ -416,6 +439,7 @@ async def get_gmail_message_detail(db: Session, settings: Settings, user: models
         params={"format": "full"},
         fallback_detail="Gmail 메시지 조회에 실패했습니다.",
         forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+        not_found_detail="Gmail 메시지를 찾을 수 없습니다.",
     )
     message = enrich_gmail_message_persona(db, user, gmail_message_out(detail))
     body = _plain_text_from_payload(detail.get("payload", {}))

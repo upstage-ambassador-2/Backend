@@ -162,8 +162,10 @@ Gmail에서 최근 받은 메일을 조회하고, 선택한 메일의 원문과 
 ### 기능 상세 동작
 - Inbox 화면은 server component에서 `GET /gmail/messages`를 호출해 메일 목록을 렌더링한다.
 - 페이지 크기와 Gmail `pageToken` 기반 cursor pagination을 지원한다.
+- 목록 조회 중 Gmail cursor에는 있으나 metadata 조회 시 사라진 메시지는 stale row로 보고 해당 항목만 건너뛴다.
 - 메일 항목 클릭 시 `/compose/{personaId}/reply/{messageId}` 또는 `/compose/reply/{messageId}`로 이동한다.
 - 상세 route는 server side에서 `GET /gmail/messages/{messageId}`를 호출한다.
+- 상세 조회에서 Gmail이 404를 반환하면 백엔드는 `Gmail 메시지를 찾을 수 없습니다.` 오류를 반환한다.
 - 상세 응답의 raw body와 reply context를 Compose에 주입한다.
 - Gmail 원문이 `text/html`만 제공될 경우 백엔드는 태그, script/style 노이즈를 제거한 plain text로 reply context를 저장한다.
 - sender email이 기존 persona와 매칭되면 해당 persona를 사용한다.

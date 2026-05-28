@@ -203,8 +203,8 @@ AI가 생성한 초안과 Gmail 발송 상태를 사용자별로 저장하고, H
 
 ### 기능 상세 동작
 - `/ai/generate` 완료 시 HistoryItem을 `draft` 상태로 생성한다.
-- Compose 작성 결과 body는 생성 완료 후 사용자가 직접 수정할 수 있다.
-- history와 연결된 draft body 수정은 500ms debounce 후 `PATCH /history/{id}/draft`로 저장된다.
+- Compose 작성 결과 subject/body는 생성 완료 후 사용자가 직접 수정할 수 있다.
+- history와 연결된 draft subject/body 수정은 500ms debounce 후 `PATCH /history/{id}/draft`로 저장된다.
 - AI 스트리밍 중에는 작성 결과 편집과 초기화를 잠가 수동 입력과 생성 결과 충돌을 막는다.
 - 작성 결과의 비우기 동작은 `POST /history/{id}/draft/reset`으로 subject/body를 공백으로 초기화한다.
 - `sent` 상태의 history는 draft 수정/초기화를 허용하지 않는다.
@@ -232,7 +232,7 @@ Compose, Gmail send, Persona, ReplyContext, mock API
 
 ### 검증 기준
 - 앱 shell 서버 초기 데이터 로딩에서 받은 `GET /history` 목록이 History 화면에 사용자별로 표시된다.
-- Compose 생성 완료 후 작성 결과 body를 수정하면 history draft 저장 API가 호출된다.
+- Compose 생성 완료 후 작성 결과 subject/body를 수정하면 history draft 저장 API가 호출된다.
 - 비우기 동작은 history draft subject/body를 공백으로 초기화한다.
 - 발송 완료 history는 수정/초기화되지 않는다.
 - Gmail 발송 직전의 최신 subject/body가 history에 남는다.

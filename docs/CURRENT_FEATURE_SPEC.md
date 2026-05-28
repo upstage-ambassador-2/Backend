@@ -229,6 +229,7 @@ AI가 생성한 초안과 Gmail 발송 상태를 사용자별로 저장하고, H
 - 필터/검색 변경으로 열린 row가 목록에서 사라지면 detail panel을 닫는다.
 - History 생성/발송 시점에 persona와 counterparty 이름/이메일 스냅샷을 저장한다.
 - persona 삭제 시 연결된 history의 `persona_id`는 해제하되 저장된 `personaName`, `personaEmail`, `counterpartyName`, `counterpartyEmail` fallback으로 대상 정보를 계속 표시한다.
+- `GET /history?personaEmail=` 필터는 현재 persona 이메일뿐 아니라 저장된 persona/counterparty 스냅샷 이메일도 매칭한다.
 
 ### 기능 효과
 사용자는 생성 및 발송 기록을 추적하고, 목록 preview만으로 부족한 경우 전체 subject/body를 즉시 확인할 수 있다.

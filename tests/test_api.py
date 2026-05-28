@@ -277,6 +277,8 @@ def test_persona_delete_preserves_history_counterparty_snapshot():
     assert item["personaEmail"] == "lead@example.com"
     assert item["counterpartyName"] == "김지훈 팀장"
     assert item["counterpartyEmail"] == "lead@example.com"
+    filtered = client.get("/history", params={"personaEmail": "lead@example.com"}).json()
+    assert [entry["id"] for entry in filtered] == [item["id"]]
 
 
 def test_import_contacts_skips_duplicate_email_and_name(monkeypatch):

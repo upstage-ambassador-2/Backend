@@ -1207,6 +1207,35 @@ def test_gmail_messages_excludes_current_user_sender(monkeypatch):
     assert [message["id"] for message in response.json()["messages"]] == ["external"]
 
 
+def test_gmail_messages_skip_stale_metadata_rows(monkeypatch):
+    async def fake_access_token(_db, _settings, _user):
+        return "gmail-access-token"
+
+    async def fake_google_get(_client, url, _access_token, params=None, **_kwargs):
+        if url.endswith("/messages"):
+            return {
+                "messages": [{"id": "deleted"}, {"id": "external"}],
+                "nextPageToken": "next-token",
+                "resultSizeEstimate": 2,
+            }
+        message_id = url.rsplit("/", 1)[-1]
+        if message_id == "deleted":
+            raise HTTPException(status_code=404, detail="Gmail 메시지를 찾을 수 없습니다.")
+        return _gmail_metadata(message_id, from_addr="External Sender <external@example.com>")
+
+    monkeypatch.setattr("app.services.google.google_access_token", fake_access_token)
+    monkeypatch.setattr("app.services.google._google_get_json_with_client", fake_google_get)
+    client, _ = authed_client()
+
+    response = client.get("/gmail/messages?limit=2")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [message["id"] for message in body["messages"]] == ["external"]
+    assert body["nextPageToken"] == "next-token"
+    assert body["hasMore"] is True
+
+
 def test_gmail_messages_forwards_page_token_and_marks_final_page(monkeypatch):
     async def fake_access_token(_db, _settings, _user):
         return "gmail-access-token"
@@ -1268,6 +1297,23 @@ def test_gmail_messages_validates_limit_bounds():
 
     assert too_small.status_code == 422
     assert too_large.status_code == 422
+
+
+def test_gmail_message_detail_returns_404_for_missing_message(monkeypatch):
+    async def fake_access_token(_db, _settings, _user):
+        return "gmail-access-token"
+
+    async def fake_google_get(_url, _access_token, params=None, **_kwargs):
+        raise HTTPException(status_code=404, detail="Gmail 메시지를 찾을 수 없습니다.")
+
+    monkeypatch.setattr("app.services.google.google_access_token", fake_access_token)
+    monkeypatch.setattr("app.services.google.google_get_json", fake_google_get)
+    client, _ = authed_client()
+
+    response = client.get("/gmail/messages/deleted")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Gmail 메시지를 찾을 수 없습니다."
 
 
 def test_gmail_html_body_is_normalized_to_plain_text():

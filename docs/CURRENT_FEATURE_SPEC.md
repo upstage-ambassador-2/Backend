@@ -186,6 +186,8 @@ Gmail API 직접 발송
 - UI의 새 메일 발송은 persona email을 수신자로 사용한다.
 - API는 `to`를 직접 받을 수 있고, 없으면 history persona 또는 reply context에서 수신자를 보완한다.
 - 답장인 경우 reply context의 thread metadata를 사용한다.
+- 백엔드는 발송 직전 subject/body에 persona 금지 표현이 포함되어 있으면 422를 반환하고 Gmail API를 호출하지 않는다.
+- 백엔드는 발송 직전 mail format signature가 body에 없으면 Gmail API 호출과 history 갱신에 사용할 최종 body에 서명을 보강한다.
 - 백엔드는 Gmail API send를 호출한다.
 - 성공 시 history 상태를 `sent`로 갱신하고 Gmail message id와 sent_at을 저장한다.
 - 실패 시 프론트엔드 toast로 에러를 표시한다.

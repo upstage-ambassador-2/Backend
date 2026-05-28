@@ -4,10 +4,19 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app import models
 from app.deps import AppSettings, CurrentUser, DbSession
-from app.schemas import GmailMessageDetailOut, GmailMessagesPageOut, GmailSendIn, GmailSendOut, ReplyContextInline
+from app.routers.format import get_or_create_format
+from app.schemas import (
+    GeneratedDraft,
+    GmailMessageDetailOut,
+    GmailMessagesPageOut,
+    GmailSendIn,
+    GmailSendOut,
+    ReplyContextInline,
+)
 from app.serializers import history_out, persona_out, reply_context_out
 from app.services.google import get_gmail_message_detail, list_gmail_messages, send_gmail_message, upsert_reply_context
 from app.services.people import assign_persona_email_if_empty, find_persona_by_email, normalize_email
+from app.services.solar import apply_generation_guardrails
 
 
 router = APIRouter(prefix="/gmail", tags=["gmail"])
@@ -89,14 +98,23 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
         history.persona_id = recipient_persona.id
     if history_persona:
         assign_persona_email_if_empty(db, user.id, history_persona, to_addr)
+    mail_format = get_or_create_format(user, db)
+    guarded_draft = apply_generation_guardrails(
+        GeneratedDraft(subject=payload.subject, body=payload.body),
+        persona=recipient_persona,
+        mail_format=mail_format,
+        forbidden_status_code=422,
+        forbidden_target="발송하려는 내용",
+        forbidden_action="수정 후 다시 보내주세요.",
+    )
 
     result = await send_gmail_message(
         db,
         settings,
         user,
         to=to_addr,
-        subject=payload.subject,
-        body=payload.body,
+        subject=guarded_draft.subject,
+        body=guarded_draft.body,
         cc=[str(item) for item in payload.cc],
         bcc=[str(item) for item in payload.bcc],
         reply_context=reply_context,
@@ -104,8 +122,8 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
     if recipient_persona:
         recipient_persona.last_used_at = models.utcnow()
     if history:
-        history.subject = payload.subject
-        history.body = payload.body
+        history.subject = guarded_draft.subject
+        history.body = guarded_draft.body
         history.status = "sent"
         history.gmail_message_id = str(result.get("id") or "")
         history.sent_at = models.utcnow()

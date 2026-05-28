@@ -256,6 +256,9 @@ def apply_generation_guardrails(
     *,
     persona: models.Persona | None,
     mail_format: models.MailFormat,
+    forbidden_status_code: int = 502,
+    forbidden_target: str = "생성 결과",
+    forbidden_action: str = "다시 생성해주세요.",
 ) -> GeneratedDraft:
     guarded = GeneratedDraft(
         subject=draft.subject.strip(),
@@ -265,8 +268,8 @@ def apply_generation_guardrails(
     if forbidden_terms:
         preview = ", ".join(forbidden_terms[:3])
         raise HTTPException(
-            status_code=502,
-            detail=f"생성 결과에 피해야 할 표현이 포함되었습니다: {preview}. 다시 생성해주세요.",
+            status_code=forbidden_status_code,
+            detail=f"{forbidden_target}에 피해야 할 표현이 포함되었습니다: {preview}. {forbidden_action}",
         )
     return guarded
 

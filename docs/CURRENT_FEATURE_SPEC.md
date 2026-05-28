@@ -57,7 +57,7 @@ Google OAuth, Settings, Gmail, Contacts
 ## 3. People/Persona 관리
 
 ### 기능 명
-페르소나 수동 CRUD
+페르소나 수동 CRUD 및 메모 구조화
 
 ### 기능 정의
 자주 메일을 보내는 사람의 이름, 이메일, 관계, 톤, 키워드, 금지 표현, 선호 표현, 메모를 저장한다.
@@ -65,6 +65,8 @@ Google OAuth, Settings, Gmail, Contacts
 ### 기능 상세 동작
 - People 화면은 `GET /personas` 결과를 목록으로 렌더링한다.
 - 사람 추가 또는 수정 시 이름, 이메일, 관계, 역할, 톤, 키워드, 금지 표현, 선호 표현, 메모를 입력한다.
+- 메모 입력 후 `AI 정리`를 누르면 `POST /personas/structure`가 자유 텍스트를 톤, 키워드, 금지 표현, 선호 표현, 요약 메모로 구조화한다.
+- 구조화 결과는 저장 전 폼 필드에 반영되며, 사용자가 다시 수정한 뒤 저장한다.
 - 저장 시 `POST /personas` 또는 `PATCH /personas/{id}`를 호출한다.
 - 삭제 시 확인 후 `DELETE /personas/{id}`를 호출한다.
 - 백엔드는 사용자별 persona를 저장한다.

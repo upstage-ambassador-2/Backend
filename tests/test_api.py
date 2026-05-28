@@ -83,6 +83,21 @@ def authed_client() -> tuple[TestClient, models.User]:
     return client, user
 
 
+def set_oauth_scope(user_id: str, scope: str) -> None:
+    with SessionLocal() as db:
+        token = db.get(models.OAuthToken, user_id)
+        if not token:
+            token = models.OAuthToken(
+                user_id=user_id,
+                access_token_enc="test-access-token",
+                refresh_token_enc=None,
+            )
+            db.add(token)
+        token.scope = scope
+        token.expires_at = models.utcnow()
+        db.commit()
+
+
 def _oauth_start_next(client: TestClient, next_url: str | None) -> str:
     response = client.post("/auth/google/start", json={"next": next_url})
     assert response.status_code == 200
@@ -187,6 +202,68 @@ def test_me_and_format_roundtrip():
 
     fetched = client.get("/format")
     assert fetched.json()["signature"] == "Tester"
+
+
+def test_me_reports_integration_status_from_google_scopes():
+    client, user = authed_client()
+
+    missing_token = client.get("/me")
+    assert missing_token.status_code == 200
+    assert missing_token.json()["integrations"] == {
+        "gmail": False,
+        "contacts": False,
+        "slack": "planned",
+        "notion": "planned",
+    }
+
+    set_oauth_scope(
+        user.id,
+        "openid email profile "
+        "https://www.googleapis.com/auth/gmail.readonly "
+        "https://www.googleapis.com/auth/gmail.send",
+    )
+
+    response = client.get("/me")
+
+    assert response.status_code == 200
+    assert response.json()["integrations"] == {
+        "gmail": True,
+        "contacts": False,
+        "slack": "planned",
+        "notion": "planned",
+    }
+
+
+def test_integrations_require_all_google_scopes():
+    client, user = authed_client()
+
+    set_oauth_scope(
+        user.id,
+        "openid email profile "
+        "https://www.googleapis.com/auth/gmail.readonly "
+        "https://www.googleapis.com/auth/contacts.readonly",
+    )
+    missing_send = client.get("/integrations")
+    assert missing_send.status_code == 200
+    assert missing_send.json()["gmail"] is False
+    assert missing_send.json()["contacts"] is True
+
+    set_oauth_scope(
+        user.id,
+        "openid email profile "
+        "https://www.googleapis.com/auth/gmail.readonly "
+        "https://www.googleapis.com/auth/gmail.send "
+        "https://www.googleapis.com/auth/contacts.readonly",
+    )
+    complete = client.get("/integrations")
+
+    assert complete.status_code == 200
+    assert complete.json() == {
+        "gmail": True,
+        "contacts": True,
+        "slack": "planned",
+        "notion": "planned",
+    }
 
 
 def test_integration_toggle_allows_known_providers_only():

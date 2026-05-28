@@ -10,6 +10,7 @@ from app.schemas import (
     PersonaOut,
     ReplyContextOut,
     UserOut,
+    normalize_mbti_value,
 )
 from app.services.people import display_name_from_address, normalize_email
 
@@ -49,6 +50,13 @@ def length_label(value: int) -> str:
     return generation_length_label(value)
 
 
+def persona_mbti_value(value: str | None) -> str:
+    try:
+        return normalize_mbti_value(value) or ""
+    except ValueError:
+        return ""
+
+
 def user_out(user: models.User) -> UserOut:
     return UserOut(
         id=user.id,
@@ -81,7 +89,7 @@ def persona_out(persona: models.Persona) -> PersonaOut:
         email=persona.email,
         source=persona.source,
         role=persona.role,
-        mbti=persona.mbti,
+        mbti=persona_mbti_value(persona.mbti),
         avatar=persona.avatar or initials[:2],
         color=persona.color,
         keywords=split_lines(persona.keywords),

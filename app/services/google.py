@@ -46,25 +46,31 @@ def build_google_auth_url(settings: Settings, state: str) -> str:
 async def exchange_code_for_token(settings: Settings, code: str) -> dict[str, Any]:
     if not settings.google_client_id or not settings.google_client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth 환경변수가 설정되지 않았습니다.")
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": settings.google_redirect_uri,
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": settings.google_redirect_uri,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google OAuth 토큰 교환에 실패했습니다.") from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="Google OAuth 토큰 교환에 실패했습니다.")
     return response.json()
 
 
 async def fetch_userinfo(access_token: str) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google 사용자 정보를 가져오지 못했습니다.") from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="Google 사용자 정보를 가져오지 못했습니다.")
     return response.json()
@@ -131,16 +137,19 @@ async def refresh_access_token(db: Session, settings: Settings, token: models.OA
         )
     if not settings.google_client_id or not settings.google_client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth 환경변수가 설정되지 않았습니다.")
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google 토큰 갱신에 실패했습니다. 잠시 후 다시 시도해주세요.") from exc
     if response.status_code >= 400:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -177,7 +186,10 @@ async def _google_get_json_with_client(
     fallback_detail: str = "Google API 요청에 실패했습니다.",
     forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
 ) -> dict[str, Any]:
-    response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=fallback_detail) from exc
     _raise_google_api_error(response, fallback_detail=fallback_detail, forbidden_detail=forbidden_detail)
     return response.json()
 
@@ -202,8 +214,11 @@ async def google_get_json(
 
 
 async def google_post_json(url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Gmail 발송에 실패했습니다.") from exc
     _raise_google_api_error(
         response,
         fallback_detail="Gmail 발송에 실패했습니다.",

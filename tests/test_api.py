@@ -922,6 +922,45 @@ def test_google_post_json_maps_auth_and_retry_errors(monkeypatch):
     assert call_with_status(500) == (502, "Gmail 발송에 실패했습니다.")
 
 
+def test_google_clients_map_transport_errors(monkeypatch):
+    original_async_client = google_service.httpx.AsyncClient
+
+    def raise_connect_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("network unavailable", request=request)
+
+    transport = httpx.MockTransport(raise_connect_error)
+    monkeypatch.setattr(
+        google_service.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: original_async_client(transport=transport),
+    )
+
+    def call_google_get() -> tuple[int, str]:
+        try:
+            asyncio.run(
+                google_service.google_get_json(
+                    "https://gmail.test/messages",
+                    "token",
+                    fallback_detail="Gmail 받은편지함 조회에 실패했습니다.",
+                )
+            )
+        except HTTPException as exc:
+            return exc.status_code, str(exc.detail)
+        raise AssertionError("Google API transport error was not raised")
+
+    def call_google_post() -> tuple[int, str]:
+        try:
+            asyncio.run(
+                google_service.google_post_json("https://gmail.test/send", "token", {"raw": "x"})
+            )
+        except HTTPException as exc:
+            return exc.status_code, str(exc.detail)
+        raise AssertionError("Google API transport error was not raised")
+
+    assert call_google_get() == (502, "Gmail 받은편지함 조회에 실패했습니다.")
+    assert call_google_post() == (502, "Gmail 발송에 실패했습니다.")
+
+
 def test_send_gmail_message_preserves_reply_thread_headers(monkeypatch):
     captured = {}
 

@@ -677,7 +677,7 @@ def test_gmail_send_uses_history_persona_email_and_updates_history(monkeypatch):
 def test_gmail_send_persists_latest_payload_to_history(monkeypatch):
     async def fake_send_gmail_message(_db, _settings, _user, *, to, subject, body, cc, bcc, reply_context):
         assert subject == "수정된 제목"
-        assert body == "수정된 본문"
+        assert body == "수정된 본문\n\nTester\nuser@example.com"
         return {"id": "gmail-edited-1", "threadId": "thread-edited-1"}
 
     monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
@@ -706,8 +706,45 @@ def test_gmail_send_persists_latest_payload_to_history(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["history"]["subject"] == "수정된 제목"
-    assert payload["history"]["body"] == "수정된 본문"
-    assert client.get(f"/history/{history_id}").json()["body"] == "수정된 본문"
+    assert payload["history"]["body"] == "수정된 본문\n\nTester\nuser@example.com"
+    assert client.get(f"/history/{history_id}").json()["body"] == "수정된 본문\n\nTester\nuser@example.com"
+
+
+def test_gmail_send_rejects_forbidden_persona_terms(monkeypatch):
+    async def fake_send_gmail_message(*_args, **_kwargs):
+        raise AssertionError("Forbidden draft should not be sent")
+
+    monkeypatch.setattr("app.routers.gmail.send_gmail_message", fake_send_gmail_message)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        persona = models.Persona(
+            user_id=user.id,
+            name="김지훈 팀장",
+            email="lead@example.com",
+            avoid="모호한 표현",
+        )
+        db.add(persona)
+        db.flush()
+        history = models.HistoryItem(
+            user_id=user.id,
+            persona_id=persona.id,
+            brief="발송 전 검증",
+            subject="기존 제목",
+            body="기존 본문",
+            status="draft",
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    response = client.post(
+        "/gmail/send",
+        json={"historyId": history_id, "subject": "일정 공유", "body": "모호한 표현으로 답변드립니다."},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "발송하려는 내용에 피해야 할 표현이 포함되었습니다: 모호한 표현. 수정 후 다시 보내주세요."
+    assert client.get(f"/history/{history_id}").json()["status"] == "draft"
 
 
 def test_gmail_send_does_not_resend_already_sent_history(monkeypatch):

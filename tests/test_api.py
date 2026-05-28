@@ -248,7 +248,7 @@ def test_persona_crud():
     assert client.get("/personas").json() == []
 
 
-def test_persona_delete_rejects_history_linked_persona():
+def test_persona_delete_preserves_history_counterparty_snapshot():
     client, user = authed_client()
     with SessionLocal() as db:
         persona = models.Persona(user_id=user.id, name="김지훈 팀장", email="lead@example.com")
@@ -268,9 +268,15 @@ def test_persona_delete_rejects_history_linked_persona():
 
     deleted = client.delete(f"/personas/{persona_id}")
 
-    assert deleted.status_code == 409
-    assert deleted.json()["detail"] == "히스토리와 연결된 페르소나는 삭제할 수 없습니다."
-    assert client.get("/history").json()[0]["personaId"] == persona_id
+    assert deleted.status_code == 204
+    assert client.get("/personas").json() == []
+    item = client.get("/history").json()[0]
+    assert item["personaId"] is None
+    assert item["persona"] is None
+    assert item["personaName"] == "김지훈 팀장"
+    assert item["personaEmail"] == "lead@example.com"
+    assert item["counterpartyName"] == "김지훈 팀장"
+    assert item["counterpartyEmail"] == "lead@example.com"
 
 
 def test_import_contacts_skips_duplicate_email_and_name(monkeypatch):

@@ -15,7 +15,12 @@ from app.schemas import (
 )
 from app.serializers import history_out, persona_out, reply_context_out
 from app.services.google import get_gmail_message_detail, list_gmail_messages, send_gmail_message, upsert_reply_context
-from app.services.people import assign_persona_email_if_empty, find_persona_by_email, normalize_email
+from app.services.people import (
+    assign_persona_email_if_empty,
+    display_name_from_address,
+    find_persona_by_email,
+    normalize_email,
+)
 from app.services.solar import apply_generation_guardrails
 
 
@@ -127,6 +132,15 @@ async def send(payload: GmailSendIn, user: CurrentUser, db: DbSession, settings:
         history.status = "sent"
         history.gmail_message_id = str(result.get("id") or "")
         history.sent_at = models.utcnow()
+        if recipient_persona:
+            history.persona_name = recipient_persona.name
+            history.persona_email = recipient_persona.email
+            history.counterparty_name = recipient_persona.name
+            history.counterparty_email = recipient_persona.email or to_addr
+        else:
+            if reply_context:
+                history.counterparty_name = display_name_from_address(reply_context.from_addr)
+            history.counterparty_email = to_addr or history.counterparty_email
     if history or recipient_persona:
         db.commit()
     if history:

@@ -37,6 +37,10 @@ class User(Base):
     personas: Mapped[list["Persona"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     reply_contexts: Mapped[list["ReplyContext"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     history_items: Mapped[list["HistoryItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    draft_revision_messages: Mapped[list["DraftRevisionMessage"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     mail_format: Mapped["MailFormat | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
@@ -107,7 +111,7 @@ class MailFormat(Base):
     greeting: Mapped[str] = mapped_column(Text, default="안녕하세요.")
     closing: Mapped[str] = mapped_column(Text, default="감사합니다.")
     structure: Mapped[str] = mapped_column(Text, default="인사 → 본문 → 요청 → 마무리")
-    bullet_style: Mapped[str] = mapped_column(String(255), default="· (가운뎃점)")
+    bullet_style: Mapped[str] = mapped_column(String(255), default="문단형 기본 · 목록 요청 시에만 사용")
     language: Mapped[str] = mapped_column(String(255), default="한국어 · 존댓말 기본")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -164,3 +168,27 @@ class HistoryItem(Base):
     user: Mapped[User] = relationship(back_populates="history_items")
     persona: Mapped[Persona | None] = relationship(back_populates="history_items")
     reply_context: Mapped[ReplyContext | None] = relationship(back_populates="history_items")
+    revision_messages: Mapped[list["DraftRevisionMessage"]] = relationship(
+        back_populates="history",
+        cascade="all, delete-orphan",
+    )
+
+
+class DraftRevisionMessage(Base):
+    __tablename__ = "draft_revision_messages"
+    __table_args__ = (
+        Index("ix_draft_revision_history_created", "history_id", "created_at"),
+        Index("ix_draft_revision_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    history_id: Mapped[str] = mapped_column(ForeignKey("history.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text, default="")
+    subject: Mapped[str | None] = mapped_column(Text)
+    body: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="draft_revision_messages")
+    history: Mapped[HistoryItem] = relationship(back_populates="revision_messages")

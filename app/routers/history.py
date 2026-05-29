@@ -3,10 +3,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app import models
-from app.deps import CurrentUser, DbSession
-from app.schemas import HistoryDraftPatchIn, HistoryOut
-from app.serializers import history_out
+from app.deps import AppSettings, CurrentUser, DbSession
+from app.routers.format import get_or_create_format
+from app.schemas import DraftRevisionIn, DraftRevisionMessageOut, DraftRevisionOut, HistoryDraftPatchIn, HistoryOut
+from app.serializers import draft_revision_message_out, history_out
 from app.services.people import normalize_email
+from app.services.solar import (
+    allows_list_format,
+    apply_generation_guardrails,
+    build_revision_messages,
+    parse_generated_draft,
+    stream_solar_text,
+)
 
 
 router = APIRouter(prefix="/history", tags=["history"])
@@ -77,6 +85,17 @@ def _editable_history(history_id: str, user: CurrentUser, db: DbSession) -> mode
     return item
 
 
+def _history_messages(history_id: str, user: CurrentUser, db: DbSession) -> list[models.DraftRevisionMessage]:
+    return db.scalars(
+        select(models.DraftRevisionMessage)
+        .where(
+            models.DraftRevisionMessage.user_id == user.id,
+            models.DraftRevisionMessage.history_id == history_id,
+        )
+        .order_by(models.DraftRevisionMessage.created_at.asc())
+    ).all()
+
+
 @router.patch("/{history_id}/draft", response_model=HistoryOut)
 def update_history_draft(
     history_id: str,
@@ -92,6 +111,84 @@ def update_history_draft(
     db.commit()
     db.refresh(item)
     return history_out(item)
+
+
+@router.get("/{history_id}/draft/messages", response_model=list[DraftRevisionMessageOut])
+def list_history_draft_messages(
+    history_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> list[DraftRevisionMessageOut]:
+    item = db.get(models.HistoryItem, history_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="히스토리를 찾을 수 없습니다.")
+    return [draft_revision_message_out(message) for message in _history_messages(history_id, user, db)]
+
+
+@router.post("/{history_id}/draft/revise", response_model=DraftRevisionOut)
+async def revise_history_draft(
+    history_id: str,
+    payload: DraftRevisionIn,
+    user: CurrentUser,
+    db: DbSession,
+    settings: AppSettings,
+) -> DraftRevisionOut:
+    item = _editable_history(history_id, user, db)
+    previous_messages = _history_messages(history_id, user, db)
+    user_message = models.DraftRevisionMessage(
+        user_id=user.id,
+        history_id=item.id,
+        role="user",
+        content=payload.message,
+    )
+    db.add(user_message)
+    db.flush()
+
+    mail_format = get_or_create_format(user, db)
+    messages = build_revision_messages(
+        history=item,
+        revision_request=payload.message,
+        recent_messages=[*previous_messages, user_message],
+        persona=item.persona,
+        mail_format=mail_format,
+        reply_context=item.reply_context,
+    )
+
+    raw_parts: list[str] = []
+    async for token in stream_solar_text(settings, messages):
+        raw_parts.append(token)
+
+    draft = parse_generated_draft("".join(raw_parts))
+    if not draft.subject.strip() or not draft.body.strip():
+        raise HTTPException(status_code=502, detail="Solar 수정 결과가 비어 있습니다. 다시 요청해주세요.")
+
+    draft = apply_generation_guardrails(
+        draft,
+        persona=item.persona,
+        mail_format=mail_format,
+        allow_list_format=allows_list_format(payload.message),
+        forbidden_status_code=422,
+        forbidden_target="수정 결과",
+        forbidden_action="다른 방식으로 요청해주세요.",
+    )
+    item.subject = draft.subject
+    item.body = draft.body
+    assistant_message = models.DraftRevisionMessage(
+        user_id=user.id,
+        history_id=item.id,
+        role="assistant",
+        content="초안을 수정했습니다.",
+        subject=draft.subject,
+        body=draft.body,
+    )
+    db.add(assistant_message)
+    db.commit()
+    db.refresh(item)
+
+    return DraftRevisionOut(
+        history=history_out(item),
+        messages=[draft_revision_message_out(message) for message in _history_messages(history_id, user, db)],
+    )
 
 
 @router.post("/{history_id}/draft/reset", response_model=HistoryOut)

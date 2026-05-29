@@ -4,12 +4,14 @@ from app import models
 from app.config import GOOGLE_SCOPES
 from app.generation_options import generation_length_label, generation_tone_label
 from app.schemas import (
+    DraftRevisionMessageOut,
     HistoryOut,
     IntegrationStatus,
     MailFormatOut,
     PersonaOut,
     ReplyContextOut,
     UserOut,
+    normalize_mbti_value,
 )
 from app.services.people import display_name_from_address, normalize_email
 
@@ -49,6 +51,13 @@ def length_label(value: int) -> str:
     return generation_length_label(value)
 
 
+def persona_mbti_value(value: str | None) -> str:
+    try:
+        return normalize_mbti_value(value) or ""
+    except ValueError:
+        return ""
+
+
 def user_out(user: models.User) -> UserOut:
     return UserOut(
         id=user.id,
@@ -81,7 +90,7 @@ def persona_out(persona: models.Persona) -> PersonaOut:
         email=persona.email,
         source=persona.source,
         role=persona.role,
-        mbti=persona.mbti,
+        mbti=persona_mbti_value(persona.mbti),
         avatar=persona.avatar or initials[:2],
         color=persona.color,
         keywords=split_lines(persona.keywords),
@@ -166,6 +175,19 @@ def history_out(history: models.HistoryItem) -> HistoryOut:
         sentAt=history.sent_at,
         subj=history.subject,
         prev=preview,
+    )
+
+
+def draft_revision_message_out(message: models.DraftRevisionMessage) -> DraftRevisionMessageOut:
+    role = "assistant" if message.role == "assistant" else "user"
+    return DraftRevisionMessageOut(
+        id=message.id,
+        historyId=message.history_id,
+        role=role,
+        content=message.content,
+        subject=message.subject,
+        body=message.body,
+        createdAt=message.created_at,
     )
 
 

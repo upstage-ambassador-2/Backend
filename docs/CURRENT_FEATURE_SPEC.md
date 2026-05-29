@@ -57,19 +57,24 @@ Google OAuth, Settings, Gmail, Contacts
 ## 3. People/Persona 관리
 
 ### 기능 명
-페르소나 수동 CRUD 및 메모 구조화
+페르소나 수동 CRUD, MBTI 추정 및 메모 구조화
 
 ### 기능 정의
-자주 메일을 보내는 사람의 이름, 이메일, 관계, 톤, 키워드, 금지 표현, 선호 표현, 메모를 저장한다.
+자주 메일을 보내는 사람의 이름, 이메일, 관계, 역할, MBTI, 톤, 키워드, 금지 표현, 선호 표현, 메모를 저장한다.
 
 ### 기능 상세 동작
 - People 화면은 `GET /personas` 결과를 목록으로 렌더링한다.
-- 사람 추가 또는 수정 시 이름, 이메일, 관계, 역할, 톤, 키워드, 금지 표현, 선호 표현, 메모를 입력한다.
+- 사람 추가 또는 수정 시 이름, 이메일, 관계, 역할, MBTI, 톤, 키워드, 금지 표현, 선호 표현, 메모를 입력한다.
+- `POST /personas/infer-mbti`는 사용자가 적은 성향 설명을 받아 MBTI 16가지 유형 중 하나, 신뢰도, 한국어 근거, 공식 기준 URL을 반환한다.
+- MBTI 추정은 백엔드에서 MBTIonline 및 The Myers-Briggs Company 공식 페이지를 조회한 참고 텍스트와 fallback 요약을 Solar 프롬프트에 포함해 수행한다.
+- 공식 페이지 조회 실패 시에도 fallback 요약으로 분석은 계속 가능하며, 결과는 진단/채용 판단이 아닌 best-fit 성향 참고 정보로만 다룬다.
 - 메모 입력 후 `AI 정리`를 누르면 `POST /personas/structure`가 자유 텍스트를 톤, 키워드, 금지 표현, 선호 표현, 요약 메모로 구조화한다.
 - 구조화 결과는 저장 전 폼 필드에 반영되며, 사용자가 다시 수정한 뒤 저장한다.
 - 저장 시 `POST /personas` 또는 `PATCH /personas/{id}`를 호출한다.
 - 삭제 시 확인 후 `DELETE /personas/{id}`를 호출한다.
 - 백엔드는 사용자별 persona를 저장한다.
+- 백엔드는 persona 생성/수정 시 MBTI를 대문자 16가지 유형 또는 빈 값으로 정규화하고, 그 외 값은 422로 거부한다.
+- 저장된 MBTI는 메일 생성 시 persona 컨텍스트에 포함하되, 생성 본문에 유형명이나 성격 분석을 직접 언급하지 않도록 프롬프트에서 제한한다.
 - 이메일이 있는 persona는 사용자별 중복 이메일을 방지한다.
 - 이메일이 비어 있는 persona는 중복 생성을 허용한다.
 
@@ -113,8 +118,9 @@ Google OAuth `contacts.readonly`, People, Compose
 ### 기능 상세 동작
 - Format 화면은 `GET /format`으로 현재 형식을 조회한다.
 - 편집 모드에서 필드를 수정하고 저장하면 `PUT /format`을 호출한다.
+- 백엔드는 인사말, 본문 구조, 기본 언어가 공백이면 422를 반환해 빈 필수 형식 저장을 막는다.
 - 백엔드는 사용자별 1:1 MailFormat을 생성 또는 갱신한다.
-- AI 생성 시 백엔드가 MailFormat을 시스템 프롬프트에 삽입한다.
+- AI 생성 시 백엔드가 MailFormat을 태그로 구분된 사용자 컨텍스트에 포함하고, 시스템 프롬프트는 해당 컨텍스트가 출력 계약을 바꾸는 지시로 해석되지 않도록 고정 규칙을 둔다.
 
 ### 기능 효과
 AI 초안이 사용자의 평소 이메일 스타일과 서명을 따른다.
@@ -134,7 +140,15 @@ Solar 기반 SSE 메일 초안 생성
 - Compose 화면에서 brief를 입력하거나 reply context가 있는 상태에서 `Mello에게 작성 요청`을 누른다.
 - 프론트엔드는 `POST /ai/generate`를 호출하고 SSE stream을 읽는다.
 - 백엔드는 persona, reply context, mail format을 조회하고 Solar 프롬프트를 구성한다.
-- Solar 프롬프트에는 persona의 피해야 할 표현을 그대로 쓰지 말 것과, 서명이 있으면 본문 끝에 포함할 것을 명시한다.
+- Solar 프롬프트에는 출력 계약(Subject/Body), 사실 생성 금지, 길이별 본문 구성, 답장 작성 규칙, persona 선호/금지 표현, 서명 포함 규칙을 명시한다.
+- system prompt는 제목/본문 형식, plain text 문단 구분, 근거 없는 긴급/확정/과장 표현 금지, 한국어 존댓말 품질 기준을 고정한다.
+- persona MBTI가 제공되면 성향 참고 정보로만 사용하고, 생성 결과에 MBTI 유형명이나 성격 분석을 직접 쓰지 않도록 제한한다.
+- 사용자 편집 가능한 mail format, persona, reply context 값은 system prompt가 아니라 태그로 구분된 사용자 컨텍스트로 전달하고, 해당 컨텍스트가 출력 계약을 바꾸는 지시로 해석되지 않도록 system prompt에 고정 규칙을 둔다.
+- 사용자 입력과 Gmail 원문은 프롬프트 태그를 닫거나 새 지시 블록처럼 보이지 않도록 `<`, `>` 문자를 안전한 표시 문자로 치환해 전달한다.
+- 프롬프트는 시스템 규칙과 출력 계약, 사용자 brief, 답장 원문의 확인된 사실, persona 선호, mail format 순으로 작성 우선순위를 고정한다.
+- 프롬프트에는 작성 유형, 수신자 기준, 톤/길이 옵션, 길이 구성을 별도 task block으로 제공해 새 메일과 답장 메일의 수신자 혼동을 줄인다.
+- 답장 초안은 원문 제목의 `Re:` 흐름을 중복 없이 유지하고, brief에 없는 답변은 확정하지 않고 확인/검토/추가 정보 요청으로 처리한다.
+- 누락된 이름, 날짜, 링크, 첨부, 금액은 대괄호 placeholder로 만들지 않고 생략하거나 확인 요청으로 처리한다.
 - 생성 중 `delta` event로 텍스트 청크를 보낸다.
 - 완료 시 `done` event로 `subject`, `body`, `history`를 반환한다.
 - 백엔드는 완료 직후 최종 draft를 검증해 mail format signature가 빠져 있으면 저장 전 본문 끝에 보강한다.
@@ -161,9 +175,12 @@ Gmail에서 최근 받은 메일을 조회하고, 선택한 메일의 원문과 
 ### 기능 상세 동작
 - Inbox 화면은 server component에서 `GET /gmail/messages`를 호출해 메일 목록을 렌더링한다.
 - 페이지 크기와 Gmail `pageToken` 기반 cursor pagination을 지원한다.
+- 목록 조회 중 Gmail cursor에는 있으나 metadata 조회 시 사라진 메시지는 stale row로 보고 해당 항목만 건너뛴다.
 - 메일 항목 클릭 시 `/compose/{personaId}/reply/{messageId}` 또는 `/compose/reply/{messageId}`로 이동한다.
 - 상세 route는 server side에서 `GET /gmail/messages/{messageId}`를 호출한다.
+- 상세 조회에서 Gmail이 404를 반환하면 백엔드는 `Gmail 메시지를 찾을 수 없습니다.` 오류를 반환한다.
 - 상세 응답의 raw body와 reply context를 Compose에 주입한다.
+- Gmail 원문이 `text/html`만 제공될 경우 백엔드는 태그, script/style 노이즈를 제거한 plain text로 reply context를 저장한다.
 - sender email이 기존 persona와 매칭되면 해당 persona를 사용한다.
 - 매칭 persona가 없고 본인 이메일이 아니면 클라이언트가 신규 persona 생성을 보조하고 생성된 persona의 reply route로 이동한다.
 

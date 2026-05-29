@@ -2,6 +2,7 @@ import asyncio
 import base64
 from datetime import timedelta
 from email.message import EmailMessage
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlencode
 
@@ -46,25 +47,31 @@ def build_google_auth_url(settings: Settings, state: str) -> str:
 async def exchange_code_for_token(settings: Settings, code: str) -> dict[str, Any]:
     if not settings.google_client_id or not settings.google_client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth 환경변수가 설정되지 않았습니다.")
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": settings.google_redirect_uri,
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": settings.google_redirect_uri,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google OAuth 토큰 교환에 실패했습니다.") from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="Google OAuth 토큰 교환에 실패했습니다.")
     return response.json()
 
 
 async def fetch_userinfo(access_token: str) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google 사용자 정보를 가져오지 못했습니다.") from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="Google 사용자 정보를 가져오지 못했습니다.")
     return response.json()
@@ -116,7 +123,7 @@ def default_mail_format(user: models.User) -> models.MailFormat:
         greeting="안녕하세요.",
         closing="감사합니다.",
         structure="인사 → 본문 → 요청 → 마무리",
-        bullet_style="· (가운뎃점)",
+        bullet_style="문단형 기본 · 목록 요청 시에만 사용",
         language="한국어 · 존댓말 기본",
         signature=f"{user.name}\n{user.email}",
     )
@@ -131,16 +138,19 @@ async def refresh_access_token(db: Session, settings: Settings, token: models.OA
         )
     if not settings.google_client_id or not settings.google_client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth 환경변수가 설정되지 않았습니다.")
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google 토큰 갱신에 실패했습니다. 잠시 후 다시 시도해주세요.") from exc
     if response.status_code >= 400:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -176,9 +186,18 @@ async def _google_get_json_with_client(
     *,
     fallback_detail: str = "Google API 요청에 실패했습니다.",
     forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    not_found_detail: str | None = None,
 ) -> dict[str, Any]:
-    response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
-    _raise_google_api_error(response, fallback_detail=fallback_detail, forbidden_detail=forbidden_detail)
+    try:
+        response = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=fallback_detail) from exc
+    _raise_google_api_error(
+        response,
+        fallback_detail=fallback_detail,
+        forbidden_detail=forbidden_detail,
+        not_found_detail=not_found_detail,
+    )
     return response.json()
 
 
@@ -189,6 +208,7 @@ async def google_get_json(
     *,
     fallback_detail: str = "Google API 요청에 실패했습니다.",
     forbidden_detail: str = "Google 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+    not_found_detail: str | None = None,
 ) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
         return await _google_get_json_with_client(
@@ -198,12 +218,16 @@ async def google_get_json(
             params,
             fallback_detail=fallback_detail,
             forbidden_detail=forbidden_detail,
+            not_found_detail=not_found_detail,
         )
 
 
 async def google_post_json(url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Gmail 발송에 실패했습니다.") from exc
     _raise_google_api_error(
         response,
         fallback_detail="Gmail 발송에 실패했습니다.",
@@ -212,7 +236,13 @@ async def google_post_json(url: str, access_token: str, payload: dict[str, Any])
     return response.json()
 
 
-def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str, forbidden_detail: str) -> None:
+def _raise_google_api_error(
+    response: httpx.Response,
+    *,
+    fallback_detail: str,
+    forbidden_detail: str,
+    not_found_detail: str | None = None,
+) -> None:
     if response.status_code == 401:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -228,6 +258,8 @@ def _raise_google_api_error(response: httpx.Response, *, fallback_detail: str, f
             status_code=429,
             detail="Gmail 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
         )
+    if response.status_code == 404 and not_found_detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail=fallback_detail)
 
@@ -244,11 +276,55 @@ def _decode_body(data: str | None) -> str:
     return base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8", errors="replace")
 
 
+class _PlainTextHTMLParser(HTMLParser):
+    block_tags = {"address", "blockquote", "br", "div", "li", "p", "table", "tr"}
+    ignored_tags = {"script", "style"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.ignored_depth = 0
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.ignored_tags:
+            self.ignored_depth += 1
+            return
+        if tag in self.block_tags:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.ignored_tags:
+            self.ignored_depth = max(0, self.ignored_depth - 1)
+            return
+        if tag in self.block_tags:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self.ignored_depth:
+            return
+        text = data.strip()
+        if text:
+            self.parts.append(text)
+
+    def text(self) -> str:
+        lines = [" ".join(line.split()) for line in "".join(self.parts).splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def _html_to_text(value: str) -> str:
+    parser = _PlainTextHTMLParser()
+    parser.feed(value)
+    parser.close()
+    return parser.text()
+
+
 def _plain_text_from_payload(payload: dict[str, Any]) -> str:
     mime_type = payload.get("mimeType")
     body_data = payload.get("body", {}).get("data")
     if mime_type == "text/plain" and body_data:
         return _decode_body(body_data)
+    if mime_type == "text/html" and body_data:
+        return _html_to_text(_decode_body(body_data))
     for part in payload.get("parts", []) or []:
         text = _plain_text_from_payload(part)
         if text:
@@ -321,22 +397,29 @@ async def list_gmail_messages(
         messages = (listing.get("messages") or [])[:limit]
         semaphore = asyncio.Semaphore(8)
 
-        async def fetch_metadata(item: dict[str, Any]) -> GmailMessageOut:
+        async def fetch_metadata(item: dict[str, Any]) -> GmailMessageOut | None:
             async with semaphore:
-                detail = await _google_get_json_with_client(
-                    client,
-                    f"{GMAIL_API}/messages/{item['id']}",
-                    access_token,
-                    params={
-                        "format": "metadata",
-                        "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"],
-                    },
-                    fallback_detail="Gmail 메시지 조회에 실패했습니다.",
-                    forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
-                )
+                try:
+                    detail = await _google_get_json_with_client(
+                        client,
+                        f"{GMAIL_API}/messages/{item['id']}",
+                        access_token,
+                        params={
+                            "format": "metadata",
+                            "metadataHeaders": ["From", "Subject", "Date", "Message-ID", "References"],
+                        },
+                        fallback_detail="Gmail 메시지 조회에 실패했습니다.",
+                        forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+                        not_found_detail="Gmail 메시지를 찾을 수 없습니다.",
+                    )
+                except HTTPException as exc:
+                    if exc.status_code == status.HTTP_404_NOT_FOUND:
+                        return None
+                    raise
                 return gmail_message_out(detail)
 
-        message_items = await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        fetched_items = await asyncio.gather(*(fetch_metadata(item) for item in messages))
+        message_items = [item for item in fetched_items if item is not None]
         visible_items = [item for item in message_items if not _sent_by_current_user(user, item)]
         next_page_token = listing.get("nextPageToken")
         return GmailMessagesPageOut(
@@ -356,6 +439,7 @@ async def get_gmail_message_detail(db: Session, settings: Settings, user: models
         params={"format": "full"},
         fallback_detail="Gmail 메시지 조회에 실패했습니다.",
         forbidden_detail="Gmail 권한이 부족합니다. Google 권한을 다시 동의해주세요.",
+        not_found_detail="Gmail 메시지를 찾을 수 없습니다.",
     )
     message = enrich_gmail_message_persona(db, user, gmail_message_out(detail))
     body = _plain_text_from_payload(detail.get("payload", {}))

@@ -17,6 +17,7 @@ from app.services.people import (
     normalize_email,
 )
 from app.services.solar import (
+    allows_list_format,
     apply_generation_guardrails,
     build_generation_messages,
     parse_generated_draft,
@@ -85,7 +86,12 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession, settin
             draft = parse_generated_draft("".join(raw_parts))
             if not draft.subject.strip() or not draft.body.strip():
                 raise HTTPException(status_code=502, detail="Solar 생성 결과가 비어 있습니다. 다시 시도해주세요.")
-            draft = apply_generation_guardrails(draft, persona=persona, mail_format=mail_format)
+            draft = apply_generation_guardrails(
+                draft,
+                persona=persona,
+                mail_format=mail_format,
+                allow_list_format=allows_list_format(payload.brief),
+            )
             with SessionLocal() as session:
                 history = models.HistoryItem(
                     user_id=user_id,
@@ -103,6 +109,17 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession, settin
                     status="draft",
                 )
                 session.add(history)
+                session.flush()
+                session.add(
+                    models.DraftRevisionMessage(
+                        user_id=user_id,
+                        history_id=history.id,
+                        role="assistant",
+                        content="초안을 작성했습니다.",
+                        subject=draft.subject,
+                        body=draft.body,
+                    )
+                )
                 if persona_id:
                     saved_persona = session.get(models.Persona, persona_id)
                     if saved_persona:

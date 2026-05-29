@@ -9,6 +9,7 @@ from app.schemas import DraftRevisionIn, DraftRevisionMessageOut, DraftRevisionO
 from app.serializers import draft_revision_message_out, history_out
 from app.services.people import normalize_email
 from app.services.solar import (
+    allows_list_format,
     apply_generation_guardrails,
     build_revision_messages,
     parse_generated_draft,
@@ -165,6 +166,7 @@ async def revise_history_draft(
         draft,
         persona=item.persona,
         mail_format=mail_format,
+        allow_list_format=allows_list_format(payload.message),
         forbidden_status_code=422,
         forbidden_target="수정 결과",
         forbidden_action="다른 방식으로 요청해주세요.",

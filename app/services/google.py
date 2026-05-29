@@ -123,7 +123,7 @@ def default_mail_format(user: models.User) -> models.MailFormat:
         greeting="안녕하세요.",
         closing="감사합니다.",
         structure="인사 → 본문 → 요청 → 마무리",
-        bullet_style="· (가운뎃점)",
+        bullet_style="문단형 기본 · 목록 요청 시에만 사용",
         language="한국어 · 존댓말 기본",
         signature=f"{user.name}\n{user.email}",
     )

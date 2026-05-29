@@ -111,7 +111,7 @@ class MailFormat(Base):
     greeting: Mapped[str] = mapped_column(Text, default="안녕하세요.")
     closing: Mapped[str] = mapped_column(Text, default="감사합니다.")
     structure: Mapped[str] = mapped_column(Text, default="인사 → 본문 → 요청 → 마무리")
-    bullet_style: Mapped[str] = mapped_column(String(255), default="· (가운뎃점)")
+    bullet_style: Mapped[str] = mapped_column(String(255), default="문단형 기본 · 목록 요청 시에만 사용")
     language: Mapped[str] = mapped_column(String(255), default="한국어 · 존댓말 기본")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

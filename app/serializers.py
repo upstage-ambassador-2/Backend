@@ -4,6 +4,7 @@ from app import models
 from app.config import GOOGLE_SCOPES
 from app.generation_options import generation_length_label, generation_tone_label
 from app.schemas import (
+    DraftRevisionMessageOut,
     HistoryOut,
     IntegrationStatus,
     MailFormatOut,
@@ -174,6 +175,19 @@ def history_out(history: models.HistoryItem) -> HistoryOut:
         sentAt=history.sent_at,
         subj=history.subject,
         prev=preview,
+    )
+
+
+def draft_revision_message_out(message: models.DraftRevisionMessage) -> DraftRevisionMessageOut:
+    role = "assistant" if message.role == "assistant" else "user"
+    return DraftRevisionMessageOut(
+        id=message.id,
+        historyId=message.history_id,
+        role=role,
+        content=message.content,
+        subject=message.subject,
+        body=message.body,
+        createdAt=message.created_at,
     )
 
 

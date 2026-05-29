@@ -103,6 +103,17 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession, settin
                     status="draft",
                 )
                 session.add(history)
+                session.flush()
+                session.add(
+                    models.DraftRevisionMessage(
+                        user_id=user_id,
+                        history_id=history.id,
+                        role="assistant",
+                        content="초안을 작성했습니다.",
+                        subject=draft.subject,
+                        body=draft.body,
+                    )
+                )
                 if persona_id:
                     saved_persona = session.get(models.Persona, persona_id)
                     if saved_persona:

@@ -710,10 +710,12 @@ def test_history_draft_update_rejects_sent_history():
         json={"body": "수정하면 안 되는 본문"},
     )
     reset = client.post(f"/history/{history_id}/draft/reset")
+    revise = client.post(f"/history/{history_id}/draft/revise", json={"message": "더 짧게 수정"})
 
     assert updated.status_code == 409
     assert updated.json()["detail"] == "발송 완료된 히스토리는 수정할 수 없습니다."
     assert reset.status_code == 409
+    assert revise.status_code == 409
     assert client.get(f"/history/{history_id}").json()["body"] == "발송 본문"
 
 
@@ -740,6 +742,52 @@ def test_generate_stream_persists_history(monkeypatch):
     assert history[0]["toneValue"] == 3
     assert history[0]["length"] == "보통"
     assert history[0]["lengthValue"] == 3
+
+    messages = client.get(f"/history/{history[0]['id']}/draft/messages").json()
+    assert len(messages) == 1
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == "초안을 작성했습니다."
+    assert messages[0]["subject"] == "테스트 제목"
+
+
+def test_history_draft_revision_updates_history_and_persists_messages(monkeypatch):
+    async def fake_stream(_settings, messages):
+        assert "더 짧고 정중하게 수정" in messages[1]["content"]
+        assert "기존 본문" in messages[1]["content"]
+        yield "Subject: 수정 제목\n"
+        yield "Body:\n수정 본문입니다."
+
+    monkeypatch.setattr("app.routers.history.stream_solar_text", fake_stream)
+    client, user = authed_client()
+    with SessionLocal() as db:
+        history = models.HistoryItem(
+            user_id=user.id,
+            brief="초안 수정",
+            subject="기존 제목",
+            body="기존 본문",
+            status="draft",
+        )
+        db.add(history)
+        db.commit()
+        history_id = history.id
+
+    response = client.post(
+        f"/history/{history_id}/draft/revise",
+        json={"message": "더 짧고 정중하게 수정"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["history"]["subject"] == "수정 제목"
+    assert payload["history"]["body"] == "수정 본문입니다.\n\nTester\nuser@example.com"
+    assert [message["role"] for message in payload["messages"]] == ["user", "assistant"]
+    assert payload["messages"][0]["content"] == "더 짧고 정중하게 수정"
+    assert payload["messages"][1]["subject"] == "수정 제목"
+
+    persisted = client.get(f"/history/{history_id}/draft/messages")
+    assert persisted.status_code == 200
+    assert [message["role"] for message in persisted.json()] == ["user", "assistant"]
+    assert client.get(f"/history/{history_id}").json()["body"].startswith("수정 본문입니다.")
 
 
 def test_generation_prompt_includes_delivery_rules_and_reply_context():

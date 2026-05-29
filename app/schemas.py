@@ -278,6 +278,33 @@ class HistoryDraftPatchIn(BaseModel):
         return self
 
 
+class DraftRevisionMessageOut(BaseModel):
+    id: str
+    historyId: str
+    role: Literal["user", "assistant"]
+    content: str
+    subject: str | None = None
+    body: str | None = None
+    createdAt: datetime
+
+
+class DraftRevisionIn(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("message")
+    @classmethod
+    def normalize_message(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("수정 요청 내용을 입력해주세요.")
+        return text
+
+
+class DraftRevisionOut(BaseModel):
+    history: HistoryOut
+    messages: list[DraftRevisionMessageOut]
+
+
 class GmailMessageOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
